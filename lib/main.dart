@@ -39,9 +39,9 @@ const int rewardBonusPoints = 10; // النقاط الإضافية من إعلا
 const int bannerRefreshSeconds = 40; // كل كم ثانية يتحدث البانر
 
 // معرفات اختبار AdMod الرسمية (استبدلها بمعرفاتك الحقيقية عند النشر)
-const String bannerAdUnitId = 'ca-app-pub-3940256099942544/6300978111';
-const String interstitialAdUnitId = 'ca-app-pub-3940256099942544/1033173712';
-const String rewardedAdUnitId = 'ca-app-pub-3940256099942544/5224354917';
+const String bannerAdUnitId = 'ca-app-pub-9360667271539236/1088346181';
+const String interstitialAdUnitId = 'ca-app-pub-9360667271539236/8130325315';
+const String rewardedAdUnitId = 'ca-app-pub-9360667271539236/9249653649';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
