@@ -31,10 +31,15 @@ jobs:
           rm -rf android
           flutter create . --platforms android --org com.example
 
-      - name: Update minSdkVersion to 21
+      - name: Apply Android Fixes (MinSDK & Kotlin)
         run: |
+          # تحديث الحد الأدنى لإصدار الأندرويد
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/g' android/app/build.gradle
           sed -i 's/minSdkVersion 19/minSdkVersion 21/g' android/app/build.gradle
+          
+          # ترقية إصدار لغة Kotlin ليتوافق مع إعلانات جوجل
+          sed -i -E 's/id "org.jetbrains.kotlin.android" version "[0-9\.]+"/id "org.jetbrains.kotlin.android" version "1.9.20"/g' android/settings.gradle || true
+          sed -i -E "s/ext.kotlin_version = '[0-9\.]+'/ext.kotlin_version = '1.9.20'/g" android/build.gradle || true
 
       - name: Inject AdMob ID into AndroidManifest
         run: |
