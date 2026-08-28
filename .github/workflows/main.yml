@@ -31,6 +31,11 @@ jobs:
           rm -rf android
           flutter create . --platforms android --org com.example
 
+      - name: Update minSdkVersion to 21
+        run: |
+          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/g' android/app/build.gradle
+          sed -i 's/minSdkVersion 19/minSdkVersion 21/g' android/app/build.gradle
+
       - name: Inject AdMob ID into AndroidManifest
         run: |
           sed -i '/<\/application>/i \        <meta-data android:name="com.google.android.gms.ads.APPLICATION_ID" android:value="ca-app-pub-3940256099942544~3347511713"/>' android/app/src/main/AndroidManifest.xml
