@@ -512,8 +512,40 @@ class _GameScreenState extends State<GameScreen> {
 
     AdManager.instance.levelRewardedAd = null; // منع استخدامه مرتين قبل التحميل الجديد
 
+    // نتتبع محلياً هل المستخدم أكمل مشاهدة الإعلان وحصل على المكافأة فعلاً
+    // (onUserEarnedReward) قبل أن يُغلق الإعلان (onAdDismissedFullScreenContent).
+    bool rewardEarned = false;
+
+    // نستبدل الكولباك المسجّل وقت التحميل بكولباك خاص بهذه المشاهدة، حتى
+    // نستطيع التصرف بشكل مختلف حسب ما إذا اكتملت المشاهدة أم لا.
+    rewardedAd.fullScreenContentCallback = FullScreenContentCallback(
+      onAdDismissedFullScreenContent: (ad) {
+        ad.dispose();
+        AdManager.instance.loadLevelRewarded(); // تجهيز إعلان جديد فوراً للمرحلة القادمة
+        if (!rewardEarned) {
+          // المستخدم أغلق الإعلان قبل اكتماله (زر X): ينتقل للمرحلة التالية
+          // بنقاطه العادية دون أي مضاعفة.
+          appState.advanceLevel(doubled: false);
+          if (mounted) {
+            setState(() => statusText =
+                'انتقلت للمرحلة التالية بدون مضاعفة (تم إغلاق الإعلان قبل اكتماله).');
+          }
+        }
+      },
+      onAdFailedToShowFullScreenContent: (ad, error) {
+        ad.dispose();
+        AdManager.instance.loadLevelRewarded();
+        appState.advanceLevel(doubled: false);
+        if (mounted) {
+          setState(() => statusText = 'حدث خطأ في عرض الإعلان، انتقلت للمرحلة بدون مضاعفة.');
+        }
+      },
+    );
+
     rewardedAd.show(
       onUserEarnedReward: (ad, reward) {
+        // لا تتم المضاعفة إلا هنا، أي فقط بعد اكتمال مشاهدة الإعلان بالكامل.
+        rewardEarned = true;
         appState.advanceLevel(doubled: true);
         setState(() => statusText = 'تمت مضاعفة نقاطك! 🎉 المرحلة ${appState.level}');
       },
