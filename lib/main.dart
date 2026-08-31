@@ -51,10 +51,10 @@ const int extraLifeCost = 40; // سعر "الفرصة الإضافية" بالع
 const int bannerRefreshSeconds = 40; // كل كم ثانية يتحدث البانر
 
 // معرفات اختبار AdMob الرسمية (استبدلها بمعرفاتك الحقيقية عند النشر)
-const String bannerAdUnitId = 'ca-app-pub-3940256099942544/6300978111';
-const String shopRewardedAdUnitId = 'ca-app-pub-3940256099942544/5224354917';
-const String levelRewardedAdUnitId = 'ca-app-pub-3940256099942544/5354046379';
-const String pointsRewardedAdUnitId = 'ca-app-pub-3940256099942544/5224354917';
+const String bannerAdUnitId = 'ca-app-pub-9360667271539236/1088346181';
+const String shopRewardedAdUnitId = 'ca-app-pub-9360667271539236/9249653649';
+const String levelRewardedAdUnitId = 'ca-app-pub-9360667271539236/2788909857';
+const String pointsRewardedAdUnitId = 'ca-app-pub-9360667271539236/9249653649';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
