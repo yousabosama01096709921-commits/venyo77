@@ -46,13 +46,15 @@ import 'package:google_mobile_ads/google_mobile_ads.dart';
 // ---------------------------------------------------------------------------
 const int pointsPerLevel = 20; // كل كم نقطة تنتهي المرحلة
 const int rewardCoinsAmount = 50; // العملات الممنوحة من إعلان مكافأة المتجر
+const int pointsRewardAmount = 15; // النقاط الممنوحة من زر "شاهد إعلان" في شاشة اللعب
 const int extraLifeCost = 40; // سعر "الفرصة الإضافية" بالعملات
 const int bannerRefreshSeconds = 40; // كل كم ثانية يتحدث البانر
 
 // معرفات اختبار AdMob الرسمية (استبدلها بمعرفاتك الحقيقية عند النشر)
 const String bannerAdUnitId = 'ca-app-pub-3940256099942544/6300978111';
 const String shopRewardedAdUnitId = 'ca-app-pub-3940256099942544/5224354917';
-const String levelRewardedAdUnitId = 'ca-app-pub-3940256099942544/5224354917';
+const String levelRewardedAdUnitId = 'ca-app-pub-3940256099942544/5354046379';
+const String pointsRewardedAdUnitId = 'ca-app-pub-3940256099942544/5224354917';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -236,7 +238,8 @@ class AdManager extends ChangeNotifier {
   bool isBannerLoaded = false;
 
   RewardedAd? shopRewardedAd;
-  RewardedAd? levelRewardedAd;
+  RewardedInterstitialAd? levelRewardedAd;
+  RewardedAd? pointsRewardedAd;
 
   Timer? _bannerRefreshTimer;
 
@@ -244,6 +247,7 @@ class AdManager extends ChangeNotifier {
     loadBanner();
     loadShopRewarded();
     loadLevelRewarded();
+    loadPointsRewarded();
 
     _bannerRefreshTimer?.cancel();
     _bannerRefreshTimer = Timer.periodic(
@@ -304,11 +308,14 @@ class AdManager extends ChangeNotifier {
     );
   }
 
+  // إعلان تضعيف نقاط المرحلة: "Rewarded Interstitial" — إعلان بيني
+  // (بيظهر بشكل أقرب للإعلان البيني) لكنه في النهاية يمنح مكافأة
+  // فقط بعد إكمال المشاهدة، تماماً مثل إعلان المكافأة العادي.
   void loadLevelRewarded() {
-    RewardedAd.load(
+    RewardedInterstitialAd.load(
       adUnitId: levelRewardedAdUnitId,
       request: const AdRequest(),
-      rewardedAdLoadCallback: RewardedAdLoadCallback(
+      rewardedInterstitialAdLoadCallback: RewardedInterstitialAdLoadCallback(
         onAdLoaded: (ad) {
           levelRewardedAd = ad;
           levelRewardedAd!.fullScreenContentCallback = FullScreenContentCallback(
@@ -333,11 +340,41 @@ class AdManager extends ChangeNotifier {
     );
   }
 
+  void loadPointsRewarded() {
+    RewardedAd.load(
+      adUnitId: pointsRewardedAdUnitId,
+      request: const AdRequest(),
+      rewardedAdLoadCallback: RewardedAdLoadCallback(
+        onAdLoaded: (ad) {
+          pointsRewardedAd = ad;
+          pointsRewardedAd!.fullScreenContentCallback = FullScreenContentCallback(
+            onAdDismissedFullScreenContent: (ad) {
+              ad.dispose();
+              pointsRewardedAd = null;
+              loadPointsRewarded(); // طلب إعلان جديد فوراً للمرة القادمة
+            },
+            onAdFailedToShowFullScreenContent: (ad, error) {
+              ad.dispose();
+              pointsRewardedAd = null;
+              loadPointsRewarded();
+            },
+          );
+          notifyListeners();
+        },
+        onAdFailedToLoad: (error) {
+          debugPrint('فشل تحميل إعلان النقاط: $error');
+          pointsRewardedAd = null;
+        },
+      ),
+    );
+  }
+
   void disposeAll() {
     _bannerRefreshTimer?.cancel();
     bannerAd?.dispose();
     shopRewardedAd?.dispose();
     levelRewardedAd?.dispose();
+    pointsRewardedAd?.dispose();
   }
 }
 
@@ -375,10 +412,40 @@ class _GameScreenState extends State<GameScreen> {
   // منطق اللعبة
   // -------------------------------------------------------------------
   void _onTap() {
-    appState.addScore(1);
-    if (appState.score % pointsPerLevel == 0 && !_levelUpDialogOpen) {
+    _addPoints(1);
+  }
+
+  // يضيف نقاط ويتحقق مما إذا كانت الإضافة قد تخطّت عتبة مرحلة جديدة
+  // (وليس فقط إذا كانت النتيجة مضاعفاً تماماً)، حتى تعمل بشكل صحيح
+  // سواء كانت الإضافة نقطة واحدة من الضغط أو 15 نقطة من الإعلان.
+  void _addPoints(int amount) {
+    final oldScore = appState.score;
+    appState.addScore(amount);
+    final leveledUp =
+        (appState.score ~/ pointsPerLevel) > (oldScore ~/ pointsPerLevel);
+    if (leveledUp && !_levelUpDialogOpen) {
       _showLevelUpDialog();
     }
+  }
+
+  void _watchPointsAd() {
+    final rewardedAd = AdManager.instance.pointsRewardedAd;
+    if (rewardedAd == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('الإعلان لسه بيتحمّل، حاول بعد لحظة 🙏')),
+      );
+      return;
+    }
+
+    AdManager.instance.pointsRewardedAd = null; // منع الاستخدام المزدوج قبل التحميل الجديد
+
+    rewardedAd.show(
+      onUserEarnedReward: (ad, reward) {
+        _addPoints(pointsRewardAmount);
+        setState(() =>
+            statusText = 'حصلت على $pointsRewardAmount نقطة إضافية! 🎉');
+      },
+    );
   }
 
   Future<void> _showLevelUpDialog() async {
@@ -536,6 +603,19 @@ class _GameScreenState extends State<GameScreen> {
                               textStyle: const TextStyle(fontSize: 20),
                             ),
                             child: const Text('اضغط هنا (+1 نقطة)'),
+                          ),
+                          const SizedBox(height: 14),
+                          ElevatedButton.icon(
+                            onPressed: _watchPointsAd,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.amber.shade700,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 24, vertical: 14),
+                            ),
+                            icon: const Icon(Icons.play_circle_fill),
+                            label: Text(
+                                'شاهد إعلان للحصول على $pointsRewardAmount نقطة'),
                           ),
                           const SizedBox(height: 20),
                           TextButton.icon(
