@@ -78,13 +78,13 @@ const Duration premiumUnlockDuration = Duration(hours: 24);
 const List<int> premiumWorkMinuteOptions = [15, 20, 25, 30, 45, 60];
 
 // معرفات اختبار AdMob الرسمية — استبدلها بمعرفاتك الحقيقية عند النشر
-const String bannerAdUnitId = 'ca-app-pub-3940256099942544/6300978111';
-const String nativeAdUnitId = 'ca-app-pub-3940256099942544/2247696110';
-const String rewardedAdUnitId = 'ca-app-pub-3940256099942544/5224354917';
+const String bannerAdUnitId = 'ca-app-pub-9360667271539236/1088346181';
+const String nativeAdUnitId = 'ca-app-pub-9360667271539236/8866544686';
+const String rewardedAdUnitId = 'ca-app-pub-9360667271539236/9249653649';
 const String rewardedPremiumAdUnitId =
-    'ca-app-pub-3940256099942544/5224354917';
-const String interstitialAdUnitId = 'ca-app-pub-3940256099942544/1033173712';
-const String appOpenAdUnitId = 'ca-app-pub-3940256099942544/9257395921';
+    'ca-app-pub-9360667271539236/9249653649';
+const String interstitialAdUnitId = 'ca-app-pub-9360667271539236/9282311806';
+const String appOpenAdUnitId = 'ca-app-pub-9360667271539236/6867901453';
 
 // رسائل تحفيزية قصيرة تظهر عشوائياً لتشجيع المستخدم
 const List<String> motivationalQuotes = [
