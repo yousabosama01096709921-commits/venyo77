@@ -818,6 +818,7 @@ class NotificationService {
 static Future<void> cancelReminder() async {
   await _plugin.cancel(100);
 }
+}
 // ============================================================================
 // APP ENTRY POINT
 // ============================================================================
