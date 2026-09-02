@@ -787,42 +787,37 @@ class NotificationService {
   }
 
   static Future<void> scheduleDailyReminder(int hour, int minute) async {
-    await _plugin.cancel(100);
-    final now = tz.TZDateTime.now(tz.local);
-    var scheduled =
-        tz.TZDateTime(tz.local, now.year, now.month, now.day, hour, minute);
-    if (scheduled.isBefore(now)) {
-      scheduled = scheduled.add(const Duration(days: 1));
-    }
+  await _plugin.cancel(100);
+  final now = tz.TZDateTime.now(tz.local);
+  var scheduled =
+      tz.TZDateTime(tz.local, now.year, now.month, now.day, hour, minute);
+  if (scheduled.isBefore(now)) {
+    scheduled = scheduled.add(const Duration(days: 1));
+  }
   await _plugin.zonedSchedule(
-      100,
-      'تذكير يومي 💰',
-      'لا تنسَ تسجيل مصاريف اليوم في التطبيق',
-      scheduled,
-      const NotificationDetails(
-        android: AndroidNotificationDetails(
-          'daily_reminder',
-          'تذكير يومي',
-          channelDescription: 'تذكير لتسجيل المصاريف اليومية',
-          importance: Importance.defaultImportance,
-        ),
+    100,
+    'تذكير يومي 💰',
+    'لا تنسَ تسجيل مصاريف اليوم في التطبيق',
+    scheduled,
+    const NotificationDetails(
+      android: AndroidNotificationDetails(
+        'daily_reminder',
+        'تذكير يومي',
+        channelDescription: 'تذكير لتسجيل المصاريف اليومية',
+        importance: Importance.defaultImportance,
       ),
-      uiLocalNotificationDateInterpretation:
-          UILocalNotificationDateInterpretation.absoluteTime,
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-    );
-        iOS: DarwinNotificationDetails(),
-      ),
-      androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
-      matchDateTimeComponents: DateTimeComponents.time,
-    );
-  }
-
-  static Future<void> cancelReminder() async {
-    await _plugin.cancel(100);
-  }
+      iOS: DarwinNotificationDetails(),
+    ),
+    uiLocalNotificationDateInterpretation:
+        UILocalNotificationDateInterpretation.absoluteTime,
+    androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+    matchDateTimeComponents: DateTimeComponents.time,
+  );
 }
 
+static Future<void> cancelReminder() async {
+  await _plugin.cancel(100);
+}
 // ============================================================================
 // APP ENTRY POINT
 // ============================================================================
