@@ -794,7 +794,7 @@ class NotificationService {
     if (scheduled.isBefore(now)) {
       scheduled = scheduled.add(const Duration(days: 1));
     }
-    await _plugin.zonedSchedule(
+  await _plugin.zonedSchedule(
       100,
       'تذكير يومي 💰',
       'لا تنسَ تسجيل مصاريف اليوم في التطبيق',
@@ -806,6 +806,11 @@ class NotificationService {
           channelDescription: 'تذكير لتسجيل المصاريف اليومية',
           importance: Importance.defaultImportance,
         ),
+      ),
+      uiLocalNotificationDateInterpretation:
+          UILocalNotificationDateInterpretation.absoluteTime,
+      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+    );
         iOS: DarwinNotificationDetails(),
       ),
       androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
