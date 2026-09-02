@@ -1,450 +1,533 @@
 // main.dart
-// تطبيق "فوكس بومو" — مؤقّت بومودورو احترافي مع إحصائيات وتلعيب
-// ============================================================
+// "المحفظة الذكية" — نسخة مُدمجة في ملف واحد (كل الكود من كل الملفات الأصلية
+// مجموع هنا بدون حذف أي وظيفة: models + storage + ad_manager + notifications
+// + الشاشات الأربع + نقطة الدخول). قسّمها لاحقاً لملفات منفصلة إن أردت تنظيماً أفضل.
 //
-// التحديثات في هذه النسخة (بناءً على طلبك):
-// 1) إعلانات إضافية لزيادة الربح:
-//      - إعلان App Open (يظهر عند فتح التطبيق / العودة إليه من الخلفية).
-//      - إعلان Interstitial (بيني) يظهر كل عدد محدد من جلسات التركيز المكتملة.
-//      - إعلان Rewarded مستقل خاص بفتح "الوضع المميز" 24 ساعة (بالإضافة إلى
-//        رواردد مضاعفة العملات الموجود أصلاً) — أي مصدرين رواردد منفصلين.
-// 2) تحميل مسبق لكل الإعلانات فور فتح التطبيق (Banner / Native / Rewarded x2
-//    / Interstitial / App Open) + إعادة تحميل تلقائية بعد كل استخدام.
-// 3) ميزات جديدة لتمييز التطبيق:
-//      - "وسم الجلسة" (Task Tag): يقدر المستخدم يكتب على أي مهمة بيركّز قبل
-//        ما يبدأ، ويظهر الوسم في سجل الجلسات.
-//      - رسائل تحفيزية عشوائية تتغيّر مع كل جلسة/شاشة.
-//      - نظام أوسمة إنجاز (Achievements) يُفتح تلقائياً حسب عدد الجلسات
-//        والسلسلة اليومية — يظهر في شاشة الإحصائيات.
-//      - رسم بياني أسبوعي بسيط لعدد دقائق التركيز آخر 7 أيام.
-// 4) "الوضع المميز" (Premium) لمدة 24 ساعة عبر مشاهدة إعلان مكافأة:
-//      - أثناء التفعيل: تختفي إعلانات البانر والـ Native (تجربة بلا إعلانات
-//        مزعجة)، ويُسمح باختيار مدة تركيز مخصّصة، وتُفتح ثيمتان حصريتان.
-//      - عدّاد تنازلي واضح في الأعلى والمتجر يوضح الوقت المتبقي.
-// 5) رسائل تشجيعية عربية قصيرة تظهر في المؤقّت وبعد إكمال كل جلسة.
-//
-// خطوات التشغيل:
-// 1) flutter create focus_pomo
-// 2) استبدل pubspec.yaml بالنسخة المرفقة (أو أضف التبعيات المذكورة أسفل)
-//      dependencies:
-//        google_mobile_ads: ^5.1.0
-//        shared_preferences: ^2.2.3
-// 3) استبدل lib/main.dart بهذا الملف.
-// 4) أضف معرف AdMob في AndroidManifest.xml داخل <application>:
-//      <meta-data
-//          android:name="com.google.android.gms.ads.APPLICATION_ID"
-//          android:value="ca-app-pub-3940256099942544~3347511713"/>
-// 5) استبدل كل معرفات الإعلانات أدناه بمعرفاتك الحقيقية قبل النشر على المتجر
-//    (استخدام معرفات الاختبار في نسخة منشورة يخالف سياسات AdMob).
-//
-// ملاحظة: المعرفات أدناه هي معرفات اختبار رسمية من جوجل — آمنة للتجربة فقط.
-// ملاحظة أخرى: لا تُكثر من الإعلانات البينية (Interstitial) بشكل مبالغ فيه؛
-// سياسات AdMob تمنع عرضها بشكل مزعج جداً أو عند كل نقرة، لذلك تم ضبط عدّاد
-// تكرار معقول (كل 3 جلسات تركيز مكتملة) وفاصل زمني أدنى لإعلان App Open.
+// المتطلبات (ضعها في pubspec.yaml):
+//   google_mobile_ads, shared_preferences, fl_chart, connectivity_plus,
+//   flutter_local_notifications, timezone, flutter_timezone, path_provider,
+//   share_plus, file_picker, intl
 
 import 'dart:async';
-import 'dart:math';
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:fl_chart/fl_chart.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:timezone/data/latest_all.dart' as tzdata;
+import 'package:timezone/timezone.dart' as tz;
+import 'package:flutter_timezone/flutter_timezone.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:file_picker/file_picker.dart';
 
-// ---------------------------------------------------------------------------
-// إعدادات عامة
-// ---------------------------------------------------------------------------
-const int workMinutesDefault = 25;
-const int shortBreakMinutesDefault = 5;
-const int longBreakMinutesDefault = 15;
-const int sessionsBeforeLongBreak = 4;
+// ============================================================================
+// MODELS (كان في models.dart)
+// ============================================================================
 
-const int coinsPerSession = 10; // عملات مقابل كل جلسة تركيز مكتملة
-const int coinsStreakBonus = 20; // مكافأة إضافية عند الحفاظ على السلسلة يومياً
-const int themeCostLow = 30;
-const int themeCostMid = 60;
-const int themeCostHigh = 100;
+enum TxType { income, expense }
 
-const int nativeAdEveryNItems = 4; // إعلان Native كل كم عنصر في قائمة السجل
-const int bannerRefreshSeconds = 45;
+class ExpenseCategory {
+  String id;
+  String name;
+  int iconCodePoint;
+  int colorValue;
+  double monthlyBudget;
 
-// كل كم جلسة عمل مكتملة يظهر إعلان بيني (Interstitial)
-const int interstitialEverySessions = 3;
-// أقل فاصل زمني بين ظهورين لإعلان App Open حتى لا يكون مزعجاً
-const Duration appOpenMinGap = Duration(hours: 4);
-
-// مدة تفعيل "الوضع المميز" بعد مشاهدة إعلان المكافأة
-const Duration premiumUnlockDuration = Duration(hours: 24);
-
-// مدد تركيز مخصّصة متاحة فقط في الوضع المميز
-const List<int> premiumWorkMinuteOptions = [15, 20, 25, 30, 45, 60];
-
-// معرفات اختبار AdMob الرسمية — استبدلها بمعرفاتك الحقيقية عند النشر
-const String bannerAdUnitId = 'ca-app-pub-9360667271539236/1088346181';
-const String nativeAdUnitId = 'ca-app-pub-9360667271539236/8866544686';
-const String rewardedAdUnitId = 'ca-app-pub-9360667271539236/9249653649';
-const String rewardedPremiumAdUnitId =
-    'ca-app-pub-9360667271539236/9249653649';
-const String interstitialAdUnitId = 'ca-app-pub-9360667271539236/9282311806';
-const String appOpenAdUnitId = 'ca-app-pub-9360667271539236/6867901453';
-
-// رسائل تحفيزية قصيرة تظهر عشوائياً لتشجيع المستخدم
-const List<String> motivationalQuotes = [
-  'خطوة صغيرة الآن تساوي إنجازاً كبيراً لاحقاً 🌱',
-  'التركيز 25 دقيقة يهزم التسويف ساعات ⏳',
-  'أنت أقرب لهدفك من أمس، كمّل 💪',
-  'دقيقة تركيز حقيقية أفضل من ساعة تشتت 🎯',
-  'ابدأ الآن، الكمال يأتي بعد التكرار ✨',
-  'سلسلتك اليومية دليل انضباطك، حافظ عليها 🔥',
-  'كل بومودورو تُكمله هو استثمار في نفسك 📈',
-  'لا تنتظر الحافز، ابدأ ويأتيك الحافز لاحقاً 🚀',
-  'الراحة القصيرة تشحنك، لا تتجاوزها 🌿',
-  'إنجاز اليوم هو ثقة الغد، استمر 🏆',
-];
-
-String randomMotivationalQuote() =>
-    motivationalQuotes[Random().nextInt(motivationalQuotes.length)];
-
-Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  await MobileAds.instance.initialize();
-  await AppState.instance.load();
-  AdManager.instance.preloadAll();
-  runApp(const FocusPomoApp());
-}
-
-class FocusPomoApp extends StatelessWidget {
-  const FocusPomoApp({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'فوكس بومو',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        colorSchemeSeed: Colors.indigo,
-      ),
-      builder: (context, child) => Directionality(
-        textDirection: TextDirection.rtl,
-        child: child!,
-      ),
-      home: const HomeScreen(),
-    );
-  }
-}
-
-// =============================================================================
-// نماذج المتجر (ثيمات ألوان)
-// =============================================================================
-class ThemeOption {
-  final String id;
-  final String name;
-  final Color color;
-  final int cost;
-  final bool premiumOnly; // ثيم حصري: يتطلب شراء أو تفعيل الوضع المميز
-  const ThemeOption({
+  ExpenseCategory({
     required this.id,
     required this.name,
-    required this.color,
-    required this.cost,
-    this.premiumOnly = false,
+    required this.iconCodePoint,
+    required this.colorValue,
+    this.monthlyBudget = 0,
   });
-}
 
-const List<ThemeOption> themeOptions = [
-  ThemeOption(id: 'indigo', name: 'نيلي هادئ', color: Colors.indigo, cost: 0),
-  ThemeOption(
-      id: 'teal', name: 'أخضر مركّز', color: Colors.teal, cost: themeCostLow),
-  ThemeOption(
-      id: 'deepOrange',
-      name: 'برتقالي حيوي',
-      color: Colors.deepOrange,
-      cost: themeCostLow),
-  ThemeOption(
-      id: 'purple',
-      name: 'بنفسجي إبداعي',
-      color: Colors.deepPurple,
-      cost: themeCostMid),
-  ThemeOption(
-      id: 'blueGrey',
-      name: 'كحلي احترافي',
-      color: Colors.blueGrey,
-      cost: themeCostMid),
-  ThemeOption(
-      id: 'pink',
-      name: 'وردي طاقة',
-      color: Colors.pinkAccent,
-      cost: themeCostHigh),
-  // ثيمات حصرية: تُفتح مجاناً أثناء الوضع المميز، أو تُشترى بعملات دائمة
-  ThemeOption(
-      id: 'gold',
-      name: 'ذهبي حصري 👑',
-      color: Color(0xFFC9A227),
-      cost: 150,
-      premiumOnly: true),
-  ThemeOption(
-      id: 'emerald',
-      name: 'زمردي حصري 👑',
-      color: Color(0xFF0F9D58),
-      cost: 150,
-      premiumOnly: true),
-];
+  IconData get icon => IconData(iconCodePoint, fontFamily: 'MaterialIcons');
+  Color get color => Color(colorValue);
 
-// =============================================================================
-// سجل جلسة تركيز واحدة
-// =============================================================================
-class FocusSession {
-  final DateTime date;
-  final int minutes;
-  final String? label; // وسم اختياري: على أي مهمة كان التركيز
-  FocusSession({required this.date, required this.minutes, this.label});
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'iconCodePoint': iconCodePoint,
+        'colorValue': colorValue,
+        'monthlyBudget': monthlyBudget,
+      };
 
-  Map<String, dynamic> toJson() =>
-      {'date': date.toIso8601String(), 'minutes': minutes, 'label': label};
-  factory FocusSession.fromJson(Map<String, dynamic> j) => FocusSession(
-        date: DateTime.parse(j['date'] as String),
-        minutes: j['minutes'] as int,
-        label: j['label'] as String?,
+  factory ExpenseCategory.fromJson(Map<String, dynamic> j) => ExpenseCategory(
+        id: j['id'],
+        name: j['name'],
+        iconCodePoint: j['iconCodePoint'],
+        colorValue: j['colorValue'],
+        monthlyBudget: (j['monthlyBudget'] as num).toDouble(),
       );
 }
 
-// =============================================================================
-// نموذج وسام إنجاز (Achievement)
-// =============================================================================
-class Achievement {
-  final String id;
-  final String title;
-  final String description;
-  final IconData icon;
-  final bool Function(AppState state) isUnlocked;
-  const Achievement({
+class MoneyTransaction {
+  String id;
+  String? categoryId; // null إذا كانت المعاملة دخل
+  double amount;
+  String note;
+  DateTime date;
+  TxType type;
+
+  MoneyTransaction({
     required this.id,
-    required this.title,
-    required this.description,
-    required this.icon,
-    required this.isUnlocked,
+    this.categoryId,
+    required this.amount,
+    this.note = '',
+    required this.date,
+    required this.type,
   });
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'categoryId': categoryId,
+        'amount': amount,
+        'note': note,
+        'date': date.toIso8601String(),
+        'type': type.name,
+      };
+
+  factory MoneyTransaction.fromJson(Map<String, dynamic> j) =>
+      MoneyTransaction(
+        id: j['id'],
+        categoryId: j['categoryId'],
+        amount: (j['amount'] as num).toDouble(),
+        note: j['note'] ?? '',
+        date: DateTime.parse(j['date']),
+        type: (j['type'] == 'income') ? TxType.income : TxType.expense,
+      );
 }
 
-final List<Achievement> achievements = [
-  Achievement(
-    id: 'first_session',
-    title: 'أول خطوة',
-    description: 'أكملت أول جلسة تركيز',
-    icon: Icons.flag,
-    isUnlocked: (s) => s.totalSessions >= 1,
-  ),
-  Achievement(
-    id: 'ten_sessions',
-    title: 'منضبط',
-    description: 'أكملت 10 جلسات تركيز',
-    icon: Icons.star,
-    isUnlocked: (s) => s.totalSessions >= 10,
-  ),
-  Achievement(
-    id: 'fifty_sessions',
-    title: 'محترف تركيز',
-    description: 'أكملت 50 جلسة تركيز',
-    icon: Icons.workspace_premium,
-    isUnlocked: (s) => s.totalSessions >= 50,
-  ),
-  Achievement(
-    id: 'streak_3',
-    title: 'ثابت',
-    description: 'حافظت على سلسلة 3 أيام متتالية',
-    icon: Icons.local_fire_department,
-    isUnlocked: (s) => s.streakDays >= 3,
-  ),
-  Achievement(
-    id: 'streak_7',
-    title: 'أسبوع كامل',
-    description: 'حافظت على سلسلة 7 أيام متتالية',
-    icon: Icons.whatshot,
-    isUnlocked: (s) => s.streakDays >= 7,
-  ),
-  Achievement(
-    id: 'level_5',
-    title: 'صاعد بقوة',
-    description: 'وصلت للمستوى 5',
-    icon: Icons.trending_up,
-    isUnlocked: (s) => s.level >= 5,
-  ),
+class SavingsGoal {
+  String id;
+  String name;
+  double targetAmount;
+  double savedAmount;
+  DateTime? deadline;
+
+  SavingsGoal({
+    required this.id,
+    required this.name,
+    required this.targetAmount,
+    this.savedAmount = 0,
+    this.deadline,
+  });
+
+  double get progress =>
+      targetAmount <= 0 ? 0 : (savedAmount / targetAmount).clamp(0, 1);
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'targetAmount': targetAmount,
+        'savedAmount': savedAmount,
+        'deadline': deadline?.toIso8601String(),
+      };
+
+  factory SavingsGoal.fromJson(Map<String, dynamic> j) => SavingsGoal(
+        id: j['id'],
+        name: j['name'],
+        targetAmount: (j['targetAmount'] as num).toDouble(),
+        savedAmount: (j['savedAmount'] as num).toDouble(),
+        deadline: j['deadline'] != null ? DateTime.parse(j['deadline']) : null,
+      );
+}
+
+// ============================================================================
+// STORAGE / STATE (كان في storage.dart)
+// ============================================================================
+
+List<ExpenseCategory> defaultCategories() => [
+      ExpenseCategory(
+          id: 'cat_food',
+          name: 'طعام',
+          iconCodePoint: Icons.restaurant.codePoint,
+          colorValue: Colors.orange.value,
+          monthlyBudget: 0),
+      ExpenseCategory(
+          id: 'cat_bills',
+          name: 'فواتير',
+          iconCodePoint: Icons.receipt_long.codePoint,
+          colorValue: Colors.blue.value,
+          monthlyBudget: 0),
+      ExpenseCategory(
+          id: 'cat_fun',
+          name: 'ترفيه',
+          iconCodePoint: Icons.movie.codePoint,
+          colorValue: Colors.purple.value,
+          monthlyBudget: 0),
+      ExpenseCategory(
+          id: 'cat_transport',
+          name: 'مواصلات',
+          iconCodePoint: Icons.directions_car.codePoint,
+          colorValue: Colors.teal.value,
+          monthlyBudget: 0),
+      ExpenseCategory(
+          id: 'cat_shopping',
+          name: 'تسوق',
+          iconCodePoint: Icons.shopping_bag.codePoint,
+          colorValue: Colors.pink.value,
+          monthlyBudget: 0),
+    ];
+
+const List<String> supportedCurrencies = [
+  'ر.س',
+  'ج.م',
+  '\$',
+  'د.إ',
+  'د.ك',
+  '€',
+  'د.أ',
+  'د.ت',
+  'د.ع',
+  'ل.س',
 ];
 
-// =============================================================================
-// حالة التطبيق العامة: إحصائيات، عملات، مستوى، سلسلة أيام، ثيم، تخزين محلي
-// =============================================================================
-class AppState extends ChangeNotifier {
-  AppState._internal();
-  static final AppState instance = AppState._internal();
+const List<IconData> pickableIcons = [
+  Icons.restaurant,
+  Icons.receipt_long,
+  Icons.movie,
+  Icons.directions_car,
+  Icons.shopping_bag,
+  Icons.health_and_safety,
+  Icons.school,
+  Icons.pets,
+  Icons.home,
+  Icons.card_giftcard,
+  Icons.sports_soccer,
+  Icons.flight,
+  Icons.coffee,
+  Icons.phone_android,
+  Icons.local_gas_station,
+  Icons.spa,
+];
 
-  int coins = 0;
-  int totalSessions = 0;
-  int streakDays = 0;
-  DateTime? lastCompletedDay;
-  bool rewardedUsedToday = false;
+const List<Color> pickableColors = [
+  Colors.orange,
+  Colors.blue,
+  Colors.purple,
+  Colors.teal,
+  Colors.pink,
+  Colors.green,
+  Colors.red,
+  Colors.indigo,
+  Colors.brown,
+  Colors.cyan,
+  Colors.amber,
+  Colors.deepOrange,
+];
 
-  String selectedThemeId = 'indigo';
-  final Set<String> ownedThemeIds = {'indigo'};
+class BudgetState extends ChangeNotifier {
+  BudgetState._internal();
+  static final BudgetState instance = BudgetState._internal();
 
-  // الوضع المميز (24 ساعة عبر إعلان مكافأة)
-  DateTime? premiumUntil;
-  int? customWorkMinutes; // مدة تركيز مخصّصة (متاحة فقط أثناء الوضع المميز)
+  String currencySymbol = 'ر.س';
+  bool darkMode = false;
+  List<ExpenseCategory> categories = [];
+  List<MoneyTransaction> transactions = [];
+  List<SavingsGoal> goals = [];
 
-  final List<FocusSession> history = [];
+  final Set<String> thirtyDayCheckins = {}; // yyyy-MM-dd
+  double thirtyDayDailyAmount = 5;
 
-  bool get isPremiumActive =>
-      premiumUntil != null && DateTime.now().isBefore(premiumUntil!);
+  final Set<String> noSpendDays = {};
+  double noSpendDailyAmount = 20;
 
-  Duration get premiumRemaining => isPremiumActive
-      ? premiumUntil!.difference(DateTime.now())
-      : Duration.zero;
+  final Set<String> unlockedPerks = {};
 
-  int get effectiveWorkMinutes =>
-      (isPremiumActive && customWorkMinutes != null)
-          ? customWorkMinutes!
-          : workMinutesDefault;
+  bool reminderEnabled = false;
+  int reminderHour = 21;
+  int reminderMinute = 0;
 
-  int get level => 1 + (totalSessions ~/ 5);
-  int get todaysSessions =>
-      history.where((s) => _isSameDay(s.date, DateTime.now())).length;
-  int get todaysMinutes => history
-      .where((s) => _isSameDay(s.date, DateTime.now()))
-      .fold(0, (sum, s) => sum + s.minutes);
+  static String _dayKey(DateTime d) =>
+      '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
-  // دقائق التركيز لكل يوم من آخر 7 أيام (للرسم البياني الأسبوعي)
-  List<int> get last7DaysMinutes {
+  double get totalIncome => transactions
+      .where((t) => t.type == TxType.income)
+      .fold(0.0, (s, t) => s + t.amount);
+
+  double get totalExpense => transactions
+      .where((t) => t.type == TxType.expense)
+      .fold(0.0, (s, t) => s + t.amount);
+
+  double get balance => totalIncome - totalExpense;
+
+  double spentInCategory(String categoryId, {DateTime? month}) {
+    final ref = month ?? DateTime.now();
+    return transactions
+        .where((t) =>
+            t.type == TxType.expense &&
+            t.categoryId == categoryId &&
+            t.date.year == ref.year &&
+            t.date.month == ref.month)
+        .fold(0.0, (s, t) => s + t.amount);
+  }
+
+  List<MoneyTransaction> get recentTransactions {
+    final list = [...transactions]..sort((a, b) => b.date.compareTo(a.date));
+    return list.take(5).toList();
+  }
+
+  Map<String, double> categoryTotalsThisMonth() {
     final now = DateTime.now();
-    return List.generate(7, (i) {
-      final day = now.subtract(Duration(days: 6 - i));
-      return history
-          .where((s) => _isSameDay(s.date, day))
-          .fold(0, (sum, s) => sum + s.minutes);
+    final map = <String, double>{};
+    for (final c in categories) {
+      final v = spentInCategory(c.id, month: now);
+      if (v > 0) map[c.id] = v;
+    }
+    return map;
+  }
+
+  List<double> monthlyExpenseTotals({int months = 6}) {
+    final now = DateTime.now();
+    return List.generate(months, (i) {
+      final m = DateTime(now.year, now.month - (months - 1 - i));
+      return transactions
+          .where((t) =>
+              t.type == TxType.expense &&
+              t.date.year == m.year &&
+              t.date.month == m.month)
+          .fold(0.0, (s, t) => s + t.amount);
     });
   }
 
-  static bool _isSameDay(DateTime a, DateTime b) =>
-      a.year == b.year && a.month == b.month && a.day == b.day;
-
   Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
-    coins = prefs.getInt('coins') ?? 0;
-    totalSessions = prefs.getInt('totalSessions') ?? 0;
-    streakDays = prefs.getInt('streakDays') ?? 0;
-    selectedThemeId = prefs.getString('selectedThemeId') ?? 'indigo';
-    ownedThemeIds.addAll(prefs.getStringList('ownedThemeIds') ?? ['indigo']);
-    customWorkMinutes = prefs.getInt('customWorkMinutes');
-    final lastDayStr = prefs.getString('lastCompletedDay');
-    if (lastDayStr != null) lastCompletedDay = DateTime.tryParse(lastDayStr);
-    final lastRewardDayStr = prefs.getString('lastRewardDay');
-    rewardedUsedToday = lastRewardDayStr != null &&
-        _isSameDay(DateTime.parse(lastRewardDayStr), DateTime.now());
-    final premiumUntilStr = prefs.getString('premiumUntil');
-    if (premiumUntilStr != null) {
-      premiumUntil = DateTime.tryParse(premiumUntilStr);
+    currencySymbol = prefs.getString('currencySymbol') ?? 'ر.س';
+    darkMode = prefs.getBool('darkMode') ?? false;
+    reminderEnabled = prefs.getBool('reminderEnabled') ?? false;
+    reminderHour = prefs.getInt('reminderHour') ?? 21;
+    reminderMinute = prefs.getInt('reminderMinute') ?? 0;
+    thirtyDayDailyAmount = prefs.getDouble('thirtyDayDailyAmount') ?? 5;
+    noSpendDailyAmount = prefs.getDouble('noSpendDailyAmount') ?? 20;
+
+    final catStr = prefs.getString('categories');
+    if (catStr == null) {
+      categories = defaultCategories();
+    } else {
+      final list = jsonDecode(catStr) as List;
+      categories = list
+          .map((e) => ExpenseCategory.fromJson(e as Map<String, dynamic>))
+          .toList();
     }
+
+    final txStr = prefs.getString('transactions');
+    if (txStr != null) {
+      final list = jsonDecode(txStr) as List;
+      transactions = list
+          .map((e) => MoneyTransaction.fromJson(e as Map<String, dynamic>))
+          .toList();
+    }
+
+    final goalStr = prefs.getString('goals');
+    if (goalStr != null) {
+      final list = jsonDecode(goalStr) as List;
+      goals = list
+          .map((e) => SavingsGoal.fromJson(e as Map<String, dynamic>))
+          .toList();
+    }
+
+    thirtyDayCheckins.addAll(prefs.getStringList('thirtyDayCheckins') ?? []);
+    noSpendDays.addAll(prefs.getStringList('noSpendDays') ?? []);
+    unlockedPerks.addAll(prefs.getStringList('unlockedPerks') ?? []);
+
     notifyListeners();
   }
 
   Future<void> _save() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt('coins', coins);
-    await prefs.setInt('totalSessions', totalSessions);
-    await prefs.setInt('streakDays', streakDays);
-    await prefs.setString('selectedThemeId', selectedThemeId);
-    await prefs.setStringList('ownedThemeIds', ownedThemeIds.toList());
-    if (customWorkMinutes != null) {
-      await prefs.setInt('customWorkMinutes', customWorkMinutes!);
-    }
-    if (lastCompletedDay != null) {
-      await prefs.setString(
-          'lastCompletedDay', lastCompletedDay!.toIso8601String());
-    }
-    if (premiumUntil != null) {
-      await prefs.setString('premiumUntil', premiumUntil!.toIso8601String());
-    }
+    await prefs.setString('currencySymbol', currencySymbol);
+    await prefs.setBool('darkMode', darkMode);
+    await prefs.setBool('reminderEnabled', reminderEnabled);
+    await prefs.setInt('reminderHour', reminderHour);
+    await prefs.setInt('reminderMinute', reminderMinute);
+    await prefs.setDouble('thirtyDayDailyAmount', thirtyDayDailyAmount);
+    await prefs.setDouble('noSpendDailyAmount', noSpendDailyAmount);
+    await prefs.setString(
+        'categories', jsonEncode(categories.map((c) => c.toJson()).toList()));
+    await prefs.setString('transactions',
+        jsonEncode(transactions.map((t) => t.toJson()).toList()));
+    await prefs.setString(
+        'goals', jsonEncode(goals.map((g) => g.toJson()).toList()));
+    await prefs.setStringList(
+        'thirtyDayCheckins', thirtyDayCheckins.toList());
+    await prefs.setStringList('noSpendDays', noSpendDays.toList());
+    await prefs.setStringList('unlockedPerks', unlockedPerks.toList());
   }
 
-  // يُستدعى عند إكمال جلسة تركيز (وقت عمل كامل بدون إلغاء)
-  Future<void> completeFocusSession(int minutes, {String? label}) async {
-    totalSessions += 1;
-    coins += coinsPerSession;
-    history.insert(
-        0, FocusSession(date: DateTime.now(), minutes: minutes, label: label));
-
-    final today = DateTime.now();
-    if (lastCompletedDay == null) {
-      streakDays = 1;
-    } else if (_isSameDay(lastCompletedDay!, today)) {
-      // نفس اليوم، لا تغيير على السلسلة
-    } else if (today.difference(lastCompletedDay!).inDays == 1 ||
-        (_isSameDay(
-            lastCompletedDay!, today.subtract(const Duration(days: 1))))) {
-      streakDays += 1;
-      coins += coinsStreakBonus;
-    } else {
-      streakDays = 1;
-    }
-    lastCompletedDay = today;
+  Future<void> addTransaction(MoneyTransaction t) async {
+    transactions.add(t);
     await _save();
     notifyListeners();
   }
 
-  bool buyTheme(ThemeOption option) {
-    if (ownedThemeIds.contains(option.id)) return false;
-    if (coins < option.cost) return false;
-    coins -= option.cost;
-    ownedThemeIds.add(option.id);
-    _save();
+  Future<void> updateTransaction(MoneyTransaction t) async {
+    final idx = transactions.indexWhere((x) => x.id == t.id);
+    if (idx != -1) transactions[idx] = t;
+    await _save();
+    notifyListeners();
+  }
+
+  Future<void> deleteTransaction(String id) async {
+    transactions.removeWhere((t) => t.id == id);
+    await _save();
+    notifyListeners();
+  }
+
+  Future<void> addCategory(ExpenseCategory c) async {
+    categories.add(c);
+    await _save();
+    notifyListeners();
+  }
+
+  Future<void> updateCategory(ExpenseCategory c) async {
+    final idx = categories.indexWhere((x) => x.id == c.id);
+    if (idx != -1) categories[idx] = c;
+    await _save();
+    notifyListeners();
+  }
+
+  Future<void> deleteCategory(String id) async {
+    categories.removeWhere((c) => c.id == id);
+    transactions.removeWhere((t) => t.categoryId == id);
+    await _save();
+    notifyListeners();
+  }
+
+  Future<void> addGoal(SavingsGoal g) async {
+    goals.add(g);
+    await _save();
+    notifyListeners();
+  }
+
+  Future<void> addToGoal(String id, double amount) async {
+    if (id.isEmpty) return;
+    final idx = goals.indexWhere((g) => g.id == id);
+    if (idx != -1) {
+      goals[idx].savedAmount = goals[idx].savedAmount + amount;
+    }
+    await _save();
+    notifyListeners();
+  }
+
+  Future<void> deleteGoal(String id) async {
+    goals.removeWhere((g) => g.id == id);
+    await _save();
+    notifyListeners();
+  }
+
+  bool get checkedInToday =>
+      thirtyDayCheckins.contains(_dayKey(DateTime.now()));
+
+  Future<bool> checkInThirtyDayChallenge() async {
+    final key = _dayKey(DateTime.now());
+    if (thirtyDayCheckins.contains(key)) return false;
+    thirtyDayCheckins.add(key);
+    await _save();
     notifyListeners();
     return true;
   }
 
-  // هل يمكن استخدام هذا الثيم الآن؟ (مملوك دائماً، أو حصري ومفعّل عليه الوضع المميز)
-  bool canUseTheme(ThemeOption option) {
-    if (ownedThemeIds.contains(option.id)) return true;
-    if (option.premiumOnly && isPremiumActive) return true;
-    return false;
-  }
+  bool get markedNoSpendToday =>
+      noSpendDays.contains(_dayKey(DateTime.now()));
 
-  void selectTheme(String id) {
-    selectedThemeId = id;
-    _save();
+  Future<bool> markNoSpendToday() async {
+    final key = _dayKey(DateTime.now());
+    if (noSpendDays.contains(key)) return false;
+    noSpendDays.add(key);
+    await _save();
     notifyListeners();
+    return true;
   }
 
-  void setCustomWorkMinutes(int minutes) {
-    customWorkMinutes = minutes;
-    _save();
-    notifyListeners();
-  }
-
-  Future<void> doubleTodaysCoinsViaAd() async {
-    if (rewardedUsedToday) return;
-    final bonus = coinsPerSession * todaysSessions;
-    coins += bonus > 0 ? bonus : coinsStreakBonus;
-    rewardedUsedToday = true;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('lastRewardDay', DateTime.now().toIso8601String());
+  Future<void> unlockPerk(String perkId) async {
+    unlockedPerks.add(perkId);
     await _save();
     notifyListeners();
   }
 
-  // تفعيل الوضع المميز 24 ساعة بعد مشاهدة إعلان مكافأة كامل
-  Future<void> unlockPremiumFor24h() async {
-    final base =
-        isPremiumActive ? premiumUntil! : DateTime.now(); // تمديد إن كان مفعّلاً
-    premiumUntil = base.add(premiumUnlockDuration);
+  Future<void> setReminder(bool enabled, int hour, int minute) async {
+    reminderEnabled = enabled;
+    reminderHour = hour;
+    reminderMinute = minute;
+    await _save();
+    notifyListeners();
+  }
+
+  Future<void> setCurrency(String symbol) async {
+    currencySymbol = symbol;
+    await _save();
+    notifyListeners();
+  }
+
+  Future<void> setDarkMode(bool v) async {
+    darkMode = v;
+    await _save();
+    notifyListeners();
+  }
+
+  String exportBackupJson() {
+    return jsonEncode({
+      'currencySymbol': currencySymbol,
+      'darkMode': darkMode,
+      'categories': categories.map((c) => c.toJson()).toList(),
+      'transactions': transactions.map((t) => t.toJson()).toList(),
+      'goals': goals.map((g) => g.toJson()).toList(),
+      'thirtyDayCheckins': thirtyDayCheckins.toList(),
+      'noSpendDays': noSpendDays.toList(),
+    });
+  }
+
+  Future<void> importBackupJson(String data) async {
+    final j = jsonDecode(data) as Map<String, dynamic>;
+    currencySymbol = j['currencySymbol'] ?? currencySymbol;
+    darkMode = j['darkMode'] ?? darkMode;
+    categories = (j['categories'] as List)
+        .map((e) => ExpenseCategory.fromJson(e as Map<String, dynamic>))
+        .toList();
+    transactions = (j['transactions'] as List)
+        .map((e) => MoneyTransaction.fromJson(e as Map<String, dynamic>))
+        .toList();
+    goals = (j['goals'] as List)
+        .map((e) => SavingsGoal.fromJson(e as Map<String, dynamic>))
+        .toList();
+    thirtyDayCheckins
+      ..clear()
+      ..addAll((j['thirtyDayCheckins'] as List).map((e) => e.toString()));
+    noSpendDays
+      ..clear()
+      ..addAll((j['noSpendDays'] as List).map((e) => e.toString()));
     await _save();
     notifyListeners();
   }
 }
 
-// =============================================================================
-// مدير الإعلانات المركزي
-// =============================================================================
+// ============================================================================
+// AD MANAGER (كان في ad_manager.dart)
+// ============================================================================
+
+const String bannerAdUnitId = 'ca-app-pub-3940256099942544/6300978111';
+const String nativeAdUnitId = 'ca-app-pub-3940256099942544/2247696110';
+const String rewardedAdUnitId = 'ca-app-pub-3940256099942544/5224354917';
+const String interstitialAdUnitId = 'ca-app-pub-3940256099942544/1033173712';
+const String appOpenAdUnitId = 'ca-app-pub-3940256099942544/9257395921';
+
+const Duration interstitialMinGap = Duration(minutes: 3);
+const Duration appOpenMinGap = Duration(hours: 2);
+
 class AdManager extends ChangeNotifier {
   AdManager._internal();
   static final AdManager instance = AdManager._internal();
+
+  bool isOnline = true;
+  StreamSubscription<List<ConnectivityResult>>? _connSub;
 
   BannerAd? bannerAd;
   bool isBannerLoaded = false;
@@ -452,33 +535,49 @@ class AdManager extends ChangeNotifier {
   NativeAd? nativeAd;
   bool isNativeLoaded = false;
 
-  RewardedAd? rewardedAd; // لمضاعفة عملات اليوم
-  RewardedAd? rewardedPremiumAd; // لفتح الوضع المميز 24 ساعة
-
+  RewardedAd? rewardedAd;
   InterstitialAd? interstitialAd;
-  int _sessionsSinceLastInterstitial = 0;
-
   AppOpenAd? appOpenAd;
-  bool _isShowingAppOpenAd = false;
+
+  DateTime? _lastInterstitialShownAt;
   DateTime? _lastAppOpenShownAt;
+  bool _isShowingAppOpenAd = false;
 
   Timer? _bannerRefreshTimer;
 
+  Future<void> init() async {
+    try {
+      final result = await Connectivity().checkConnectivity();
+      isOnline = !result.contains(ConnectivityResult.none);
+    } catch (_) {
+      isOnline = true;
+    }
+    _connSub = Connectivity().onConnectivityChanged.listen((results) {
+      final nowOnline = !results.contains(ConnectivityResult.none);
+      final wasOnline = isOnline;
+      isOnline = nowOnline;
+      if (!wasOnline && nowOnline) {
+        preloadAll();
+      }
+      notifyListeners();
+    });
+    if (isOnline) preloadAll();
+  }
+
   void preloadAll() {
+    if (!isOnline) return;
     loadBanner();
     loadNative();
     loadRewarded();
-    loadRewardedPremium();
     loadInterstitial();
     loadAppOpen();
     _bannerRefreshTimer?.cancel();
-    _bannerRefreshTimer = Timer.periodic(
-      const Duration(seconds: bannerRefreshSeconds),
-      (_) => loadBanner(),
-    );
+    _bannerRefreshTimer =
+        Timer.periodic(const Duration(seconds: 45), (_) => loadBanner());
   }
 
   void loadBanner() {
+    if (!isOnline) return;
     bannerAd?.dispose();
     isBannerLoaded = false;
     final banner = BannerAd(
@@ -493,7 +592,7 @@ class AdManager extends ChangeNotifier {
         },
         onAdFailedToLoad: (ad, error) {
           ad.dispose();
-          debugPrint('فشل تحميل البانر: $error');
+          isBannerLoaded = false;
         },
       ),
     );
@@ -501,6 +600,7 @@ class AdManager extends ChangeNotifier {
   }
 
   void loadNative() {
+    if (!isOnline) return;
     nativeAd?.dispose();
     isNativeLoaded = false;
     final ad = NativeAd(
@@ -514,17 +614,17 @@ class AdManager extends ChangeNotifier {
         },
         onAdFailedToLoad: (ad, error) {
           ad.dispose();
-          debugPrint('فشل تحميل الإعلان المدمج: $error');
+          isNativeLoaded = false;
         },
       ),
-      nativeTemplateStyle: NativeTemplateStyle(
-        templateType: TemplateType.small,
-      ),
+      nativeTemplateStyle:
+          NativeTemplateStyle(templateType: TemplateType.small),
     );
     ad.load();
   }
 
   void loadRewarded() {
+    if (!isOnline) return;
     RewardedAd.load(
       adUnitId: rewardedAdUnitId,
       request: const AdRequest(),
@@ -546,45 +646,14 @@ class AdManager extends ChangeNotifier {
           notifyListeners();
         },
         onAdFailedToLoad: (error) {
-          debugPrint('فشل تحميل إعلان المكافأة: $error');
           rewardedAd = null;
         },
       ),
     );
   }
 
-  // إعلان مكافأة منفصل مخصّص لفتح الوضع المميز (مصدر ربح إضافي مستقل)
-  void loadRewardedPremium() {
-    RewardedAd.load(
-      adUnitId: rewardedPremiumAdUnitId,
-      request: const AdRequest(),
-      rewardedAdLoadCallback: RewardedAdLoadCallback(
-        onAdLoaded: (ad) {
-          rewardedPremiumAd = ad;
-          rewardedPremiumAd!.fullScreenContentCallback =
-              FullScreenContentCallback(
-            onAdDismissedFullScreenContent: (ad) {
-              ad.dispose();
-              rewardedPremiumAd = null;
-              loadRewardedPremium();
-            },
-            onAdFailedToShowFullScreenContent: (ad, error) {
-              ad.dispose();
-              rewardedPremiumAd = null;
-              loadRewardedPremium();
-            },
-          );
-          notifyListeners();
-        },
-        onAdFailedToLoad: (error) {
-          debugPrint('فشل تحميل إعلان مكافأة المميز: $error');
-          rewardedPremiumAd = null;
-        },
-      ),
-    );
-  }
-
   void loadInterstitial() {
+    if (!isOnline) return;
     InterstitialAd.load(
       adUnitId: interstitialAdUnitId,
       request: const AdRequest(),
@@ -606,25 +675,14 @@ class AdManager extends ChangeNotifier {
           );
         },
         onAdFailedToLoad: (error) {
-          debugPrint('فشل تحميل الإعلان البيني: $error');
           interstitialAd = null;
         },
       ),
     );
   }
 
-  // يُستدعى بعد كل جلسة عمل مكتملة؛ يعرض الإعلان البيني كل N جلسات فقط
-  void maybeShowInterstitialAfterSession() {
-    _sessionsSinceLastInterstitial += 1;
-    if (_sessionsSinceLastInterstitial < interstitialEverySessions) return;
-    if (interstitialAd == null) return; // لسه محمّلش، تجاهل بهدوء
-    _sessionsSinceLastInterstitial = 0;
-    final ad = interstitialAd!;
-    interstitialAd = null;
-    ad.show();
-  }
-
   void loadAppOpen() {
+    if (!isOnline) return;
     AppOpenAd.load(
       adUnitId: appOpenAdUnitId,
       request: const AdRequest(),
@@ -632,9 +690,7 @@ class AdManager extends ChangeNotifier {
         onAdLoaded: (ad) {
           appOpenAd = ad;
           appOpenAd!.fullScreenContentCallback = FullScreenContentCallback(
-            onAdShowedFullScreenContent: (ad) {
-              _isShowingAppOpenAd = true;
-            },
+            onAdShowedFullScreenContent: (ad) => _isShowingAppOpenAd = true,
             onAdDismissedFullScreenContent: (ad) {
               _isShowingAppOpenAd = false;
               ad.dispose();
@@ -650,21 +706,31 @@ class AdManager extends ChangeNotifier {
           );
         },
         onAdFailedToLoad: (error) {
-          debugPrint('فشل تحميل إعلان فتح التطبيق: $error');
           appOpenAd = null;
         },
       ),
     );
   }
 
-  // يُستدعى عند أول فتح للتطبيق وعند العودة من الخلفية (Resumed)
+  void maybeShowInterstitialOnNavigation() {
+    if (!isOnline || interstitialAd == null) return;
+    final now = DateTime.now();
+    if (_lastInterstitialShownAt != null &&
+        now.difference(_lastInterstitialShownAt!) < interstitialMinGap) {
+      return;
+    }
+    _lastInterstitialShownAt = now;
+    final ad = interstitialAd!;
+    interstitialAd = null;
+    ad.show();
+  }
+
   void showAppOpenAdIfAvailable() {
-    if (_isShowingAppOpenAd) return;
-    if (appOpenAd == null) return;
+    if (!isOnline || _isShowingAppOpenAd || appOpenAd == null) return;
     final now = DateTime.now();
     if (_lastAppOpenShownAt != null &&
         now.difference(_lastAppOpenShownAt!) < appOpenMinGap) {
-      return; // احترام الحد الأدنى الزمني بين إعلانين حتى لا يكون مزعجاً
+      return;
     }
     _lastAppOpenShownAt = now;
     final ad = appOpenAd!;
@@ -672,20 +738,146 @@ class AdManager extends ChangeNotifier {
     ad.show();
   }
 
-  void disposeAll() {
+  void showRewardedForPerk({
+    required String perkId,
+    required void Function() onEarned,
+    required void Function() onNotReady,
+  }) {
+    final ad = rewardedAd;
+    if (ad == null) {
+      onNotReady();
+      return;
+    }
+    rewardedAd = null;
+    ad.show(onUserEarnedReward: (ad, reward) => onEarned());
+  }
+
+  @override
+  void dispose() {
+    _connSub?.cancel();
     _bannerRefreshTimer?.cancel();
     bannerAd?.dispose();
     nativeAd?.dispose();
     rewardedAd?.dispose();
-    rewardedPremiumAd?.dispose();
     interstitialAd?.dispose();
     appOpenAd?.dispose();
+    super.dispose();
   }
 }
 
-// =============================================================================
-// الشاشة الرئيسية: تحتوي على تبويبات (المؤقّت / الإحصائيات / المتجر)
-// =============================================================================
+// ============================================================================
+// NOTIFICATIONS (كان في notifications.dart)
+// ============================================================================
+
+class NotificationService {
+  static final FlutterLocalNotificationsPlugin _plugin =
+      FlutterLocalNotificationsPlugin();
+
+  static Future<void> init() async {
+    tzdata.initializeTimeZones();
+    try {
+      final String tzName = await FlutterTimezone.getLocalTimezone();
+      tz.setLocalLocation(tz.getLocation(tzName));
+    } catch (_) {}
+    const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const iosInit = DarwinInitializationSettings();
+    await _plugin.initialize(
+      const InitializationSettings(android: androidInit, iOS: iosInit),
+    );
+  }
+
+  static Future<void> scheduleDailyReminder(int hour, int minute) async {
+    await _plugin.cancel(100);
+    final now = tz.TZDateTime.now(tz.local);
+    var scheduled =
+        tz.TZDateTime(tz.local, now.year, now.month, now.day, hour, minute);
+    if (scheduled.isBefore(now)) {
+      scheduled = scheduled.add(const Duration(days: 1));
+    }
+    await _plugin.zonedSchedule(
+      100,
+      'تذكير يومي 💰',
+      'لا تنسَ تسجيل مصاريف اليوم في التطبيق',
+      scheduled,
+      const NotificationDetails(
+        android: AndroidNotificationDetails(
+          'daily_reminder',
+          'تذكير يومي',
+          channelDescription: 'تذكير لتسجيل المصاريف اليومية',
+          importance: Importance.defaultImportance,
+        ),
+        iOS: DarwinNotificationDetails(),
+      ),
+      androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+      matchDateTimeComponents: DateTimeComponents.time,
+    );
+  }
+
+  static Future<void> cancelReminder() async {
+    await _plugin.cancel(100);
+  }
+}
+
+// ============================================================================
+// APP ENTRY POINT
+// ============================================================================
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await MobileAds.instance.initialize();
+  await BudgetState.instance.load();
+  await AdManager.instance.init();
+  await NotificationService.init();
+  if (BudgetState.instance.reminderEnabled) {
+    await NotificationService.scheduleDailyReminder(
+        BudgetState.instance.reminderHour,
+        BudgetState.instance.reminderMinute);
+  }
+  runApp(const BudgetWalletApp());
+}
+
+class BudgetWalletApp extends StatefulWidget {
+  const BudgetWalletApp({super.key});
+  @override
+  State<BudgetWalletApp> createState() => _BudgetWalletAppState();
+}
+
+class _BudgetWalletAppState extends State<BudgetWalletApp> {
+  @override
+  void initState() {
+    super.initState();
+    BudgetState.instance.addListener(_refresh);
+  }
+
+  @override
+  void dispose() {
+    BudgetState.instance.removeListener(_refresh);
+    super.dispose();
+  }
+
+  void _refresh() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final darkMode = BudgetState.instance.darkMode;
+    return MaterialApp(
+      title: 'المحفظة الذكية',
+      debugShowCheckedModeBanner: false,
+      themeMode: darkMode ? ThemeMode.dark : ThemeMode.light,
+      theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.teal),
+      darkTheme: ThemeData(
+          useMaterial3: true,
+          colorSchemeSeed: Colors.teal,
+          brightness: Brightness.dark),
+      builder: (context, child) =>
+          Directionality(textDirection: TextDirection.rtl, child: child!),
+      home: const HomeScreen(),
+    );
+  }
+}
+
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
   @override
@@ -694,14 +886,13 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _tabIndex = 0;
+  final _titles = ['المحفظة الذكية', 'التقارير', 'التحديات', 'الإعدادات'];
 
   @override
   void initState() {
     super.initState();
-    AdManager.instance.addListener(_refresh);
-    AppState.instance.addListener(_refresh);
     WidgetsBinding.instance.addObserver(this);
-    // إعلان فتح التطبيق عند أول تشغيل (بعد أن يستقر أول إطار للواجهة)
+    AdManager.instance.addListener(_refresh);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       AdManager.instance.showAppOpenAdIfAvailable();
     });
@@ -709,15 +900,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   @override
   void dispose() {
-    AdManager.instance.removeListener(_refresh);
-    AppState.instance.removeListener(_refresh);
     WidgetsBinding.instance.removeObserver(this);
+    AdManager.instance.removeListener(_refresh);
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // إظهار إعلان فتح التطبيق عند العودة من الخلفية (نمط شائع لرفع الأرباح)
     if (state == AppLifecycleState.resumed) {
       AdManager.instance.showAppOpenAdIfAvailable();
     }
@@ -727,705 +916,344 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (mounted) setState(() {});
   }
 
-  Color get _themeColor => themeOptions
-      .firstWhere((t) => t.id == AppState.instance.selectedThemeId)
-      .color;
-
-  String _formatRemaining(Duration d) {
-    final h = d.inHours;
-    final m = d.inMinutes % 60;
-    return '$h س $m د';
+  void _onTabTap(int i) {
+    if (i != _tabIndex) {
+      AdManager.instance.maybeShowInterstitialOnNavigation();
+    }
+    setState(() => _tabIndex = i);
   }
 
   @override
   Widget build(BuildContext context) {
-    final state = AppState.instance;
-    final pages = [
-      const TimerScreen(),
-      const StatsScreen(),
-      const ShopScreen(),
+    final pages = const [
+      DashboardScreen(),
+      AnalyticsScreen(),
+      ChallengesScreen(),
+      SettingsScreen(),
     ];
+    final ads = AdManager.instance;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('فوكس بومو'),
+        title: Text(_titles[_tabIndex]),
         centerTitle: true,
-        backgroundColor: _themeColor,
         actions: [
-          if (state.isPremiumActive)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 6),
-              child: Chip(
-                avatar: const Icon(Icons.workspace_premium,
-                    color: Colors.amber, size: 18),
-                label: Text('مميز ${_formatRemaining(state.premiumRemaining)}',
-                    style: const TextStyle(fontSize: 12)),
-                visualDensity: VisualDensity.compact,
+          if (!ads.isOnline)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 12),
+              child: Tooltip(
+                message: 'وضع عدم الاتصال — الإعلانات مخفية مؤقتاً',
+                child: Icon(Icons.cloud_off, size: 20),
               ),
             ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Row(
-              children: [
-                const Icon(Icons.monetization_on, color: Colors.amber),
-                const SizedBox(width: 4),
-                Text('${state.coins}',
-                    style: const TextStyle(fontWeight: FontWeight.bold)),
-              ],
-            ),
-          ),
         ],
       ),
-      body: Column(
-        children: [
-          Expanded(child: pages[_tabIndex]),
-          // ميزة "بلا إعلانات" أثناء الوضع المميز: نخفي البانر
-          if (!state.isPremiumActive &&
-              AdManager.instance.isBannerLoaded &&
-              AdManager.instance.bannerAd != null)
-            SizedBox(
-              width: AdManager.instance.bannerAd!.size.width.toDouble(),
-              height: AdManager.instance.bannerAd!.size.height.toDouble(),
-              child: AdWidget(ad: AdManager.instance.bannerAd!),
-            ),
-        ],
-      ),
+      body: IndexedStack(index: _tabIndex, children: pages),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _tabIndex,
-        onDestinationSelected: (i) => setState(() => _tabIndex = i),
+        onDestinationSelected: _onTabTap,
         destinations: const [
-          NavigationDestination(icon: Icon(Icons.timer), label: 'المؤقّت'),
           NavigationDestination(
-              icon: Icon(Icons.bar_chart), label: 'الإحصائيات'),
-          NavigationDestination(icon: Icon(Icons.storefront), label: 'المتجر'),
+              icon: Icon(Icons.dashboard), label: 'الرئيسية'),
+          NavigationDestination(
+              icon: Icon(Icons.bar_chart), label: 'التقارير'),
+          NavigationDestination(
+              icon: Icon(Icons.emoji_events), label: 'التحديات'),
+          NavigationDestination(
+              icon: Icon(Icons.settings), label: 'الإعدادات'),
         ],
       ),
     );
   }
 }
 
-// =============================================================================
-// شاشة المؤقّت (Pomodoro Engine)
-// =============================================================================
-enum PomodoroPhase { work, shortBreak, longBreak }
+// ============================================================================
+// DASHBOARD SCREEN (كان في dashboard_screen.dart)
+// ============================================================================
 
-class TimerScreen extends StatefulWidget {
-  const TimerScreen({super.key});
+class DashboardScreen extends StatefulWidget {
+  const DashboardScreen({super.key});
   @override
-  State<TimerScreen> createState() => _TimerScreenState();
+  State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
-class _TimerScreenState extends State<TimerScreen> {
-  PomodoroPhase _phase = PomodoroPhase.work;
-  int _completedInCycle = 0;
-  late int _remainingSeconds = AppState.instance.effectiveWorkMinutes * 60;
-  bool _isRunning = false;
-  Timer? _ticker;
-  String _currentQuote = randomMotivationalQuote();
-  String? _taskLabel;
-  final TextEditingController _labelController = TextEditingController();
-
-  int get _phaseTotalSeconds {
-    switch (_phase) {
-      case PomodoroPhase.work:
-        return AppState.instance.effectiveWorkMinutes * 60;
-      case PomodoroPhase.shortBreak:
-        return shortBreakMinutesDefault * 60;
-      case PomodoroPhase.longBreak:
-        return longBreakMinutesDefault * 60;
-    }
-  }
-
-  String get _phaseLabel {
-    switch (_phase) {
-      case PomodoroPhase.work:
-        return 'وقت التركيز 🎯';
-      case PomodoroPhase.shortBreak:
-        return 'استراحة قصيرة ☕';
-      case PomodoroPhase.longBreak:
-        return 'استراحة طويلة 🌿';
-    }
-  }
+class _DashboardScreenState extends State<DashboardScreen> {
+  String? _selectedCategoryId;
+  final TextEditingController _amountController = TextEditingController();
+  final TextEditingController _noteController = TextEditingController();
+  TxType _quickType = TxType.expense;
 
   @override
   void dispose() {
-    _ticker?.cancel();
-    _labelController.dispose();
+    _amountController.dispose();
+    _noteController.dispose();
     super.dispose();
   }
 
-  void _toggleTimer() {
-    if (_isRunning) {
-      _pause();
-    } else {
-      _start();
-    }
-  }
-
-  void _start() {
-    setState(() => _isRunning = true);
-    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (_remainingSeconds <= 1) {
-        _onPhaseComplete();
-      } else {
-        setState(() => _remainingSeconds -= 1);
-      }
-    });
-  }
-
-  void _pause() {
-    _ticker?.cancel();
-    setState(() => _isRunning = false);
-  }
-
-  void _resetPhase() {
-    _ticker?.cancel();
-    setState(() {
-      _isRunning = false;
-      _remainingSeconds = _phaseTotalSeconds;
-    });
-  }
-
-  Future<void> _onPhaseComplete() async {
-    _ticker?.cancel();
-    HapticFeedback.mediumImpact();
-
-    if (_phase == PomodoroPhase.work) {
-      await AppState.instance
-          .completeFocusSession(AppState.instance.effectiveWorkMinutes,
-              label: _taskLabel);
-      _completedInCycle += 1;
-      final nextPhase = _completedInCycle % sessionsBeforeLongBreak == 0
-          ? PomodoroPhase.longBreak
-          : PomodoroPhase.shortBreak;
-      setState(() {
-        _phase = nextPhase;
-        _remainingSeconds = _phaseTotalSeconds;
-        _isRunning = false;
-        _currentQuote = randomMotivationalQuote();
-      });
-      // إعلان بيني كل عدد محدد من الجلسات (يظهر بعد إغلاق شاشة الإنجاز)
-      if (mounted) await _showSessionCompleteSheet();
-      AdManager.instance.maybeShowInterstitialAfterSession();
-    } else {
-      setState(() {
-        _phase = PomodoroPhase.work;
-        _remainingSeconds = _phaseTotalSeconds;
-        _isRunning = false;
-        _currentQuote = randomMotivationalQuote();
-      });
-    }
-  }
-
-  Future<void> _showSessionCompleteSheet() {
-    return showModalBottomSheet(
+  void _openQuickAdd() {
+    final state = BudgetState.instance;
+    _amountController.clear();
+    _noteController.clear();
+    _selectedCategoryId =
+        state.categories.isNotEmpty ? state.categories.first.id : null;
+    _quickType = TxType.expense;
+    showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      builder: (ctx) => Padding(
-        padding: EdgeInsets.only(
-          left: 24,
-          right: 24,
-          top: 24,
-          bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('🎉 أحسنت! أكملت جلسة تركيز',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            Text(
-                '+$coinsPerSession عملة  •  سلسلة ${AppState.instance.streakDays} يوم',
-                style: const TextStyle(fontSize: 15, color: Colors.grey)),
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.indigo.withOpacity(0.06),
-                borderRadius: BorderRadius.circular(12),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheetState) => Padding(
+          padding: EdgeInsets.only(
+            left: 20,
+            right: 20,
+            top: 20,
+            bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text('إضافة سريعة',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 12),
+              SegmentedButton<TxType>(
+                segments: const [
+                  ButtonSegment(value: TxType.expense, label: Text('مصروف')),
+                  ButtonSegment(value: TxType.income, label: Text('دخل')),
+                ],
+                selected: {_quickType},
+                onSelectionChanged: (s) =>
+                    setSheetState(() => _quickType = s.first),
               ),
-              child: Text(
-                _currentQuote,
-                textAlign: TextAlign.center,
-                style: const TextStyle(fontStyle: FontStyle.italic),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _amountController,
+                autofocus: true,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                decoration: InputDecoration(
+                  labelText: 'المبلغ (${state.currencySymbol})',
+                  border: const OutlineInputBorder(),
+                ),
               ),
-            ),
-            const SizedBox(height: 16),
-            if (!AppState.instance.isPremiumActive)
-              OutlinedButton.icon(
-                onPressed: () {
-                  Navigator.pop(ctx);
-                  _watchAdForPremium(context);
+              const SizedBox(height: 12),
+              if (_quickType == TxType.expense)
+                DropdownButtonFormField<String>(
+                  value: _selectedCategoryId,
+                  decoration: const InputDecoration(
+                    labelText: 'الفئة',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: state.categories
+                      .map((c) => DropdownMenuItem(
+                          value: c.id,
+                          child: Row(children: [
+                            Icon(c.icon, color: c.color, size: 18),
+                            const SizedBox(width: 8),
+                            Text(c.name),
+                          ])))
+                      .toList(),
+                  onChanged: (v) =>
+                      setSheetState(() => _selectedCategoryId = v),
+                ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _noteController,
+                decoration: const InputDecoration(
+                  labelText: 'ملاحظة (اختياري)',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 16),
+              FilledButton(
+                onPressed: () async {
+                  final amount =
+                      double.tryParse(_amountController.text.trim());
+                  if (amount == null || amount <= 0) return;
+                  final tx = MoneyTransaction(
+                    id: DateTime.now().microsecondsSinceEpoch.toString(),
+                    categoryId: _quickType == TxType.expense
+                        ? _selectedCategoryId
+                        : null,
+                    amount: amount,
+                    note: _noteController.text.trim(),
+                    date: DateTime.now(),
+                    type: _quickType,
+                  );
+                  await state.addTransaction(tx);
+                  if (ctx.mounted) Navigator.pop(ctx);
+                  if (mounted) setState(() {});
                 },
-                icon: const Icon(Icons.workspace_premium),
-                label: const Text('افتح الوضع المميز 24 ساعة بمشاهدة إعلان'),
+                child: const Text('حفظ'),
               ),
-            const SizedBox(height: 8),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('متابعة'),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
 
-  void _watchAdForPremium(BuildContext context) {
-    final ad = AdManager.instance.rewardedPremiumAd;
-    if (ad == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('الإعلان لسه بيتحمّل، حاول بعد لحظة')),
-      );
-      return;
-    }
-    AdManager.instance.rewardedPremiumAd = null;
-    ad.show(
-      onUserEarnedReward: (ad, reward) async {
-        await AppState.instance.unlockPremiumFor24h();
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-                content: Text('تم تفعيل الوضع المميز لمدة 24 ساعة! 👑')),
-          );
-        }
-      },
-    );
-  }
-
-  void _editTaskLabel() {
-    _labelController.text = _taskLabel ?? '';
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('على أي مهمة ستركّز؟'),
-        content: TextField(
-          controller: _labelController,
-          autofocus: true,
-          decoration: const InputDecoration(hintText: 'مثال: كتابة تقرير'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('إلغاء'),
-          ),
-          FilledButton(
-            onPressed: () {
-              setState(() {
-                _taskLabel = _labelController.text.trim().isEmpty
-                    ? null
-                    : _labelController.text.trim();
-              });
-              Navigator.pop(ctx);
-            },
-            child: const Text('حفظ'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _pickCustomDuration() {
+  void _editOrDeleteTransaction(MoneyTransaction tx) {
     showModalBottomSheet(
       context: context,
       builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Padding(
-              padding: EdgeInsets.all(16),
-              child: Text('اختر مدة التركيز (ميزة مميزة 👑)',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-            ),
-            Wrap(
-              alignment: WrapAlignment.center,
-              spacing: 8,
-              children: premiumWorkMinuteOptions
-                  .map((m) => ChoiceChip(
-                        label: Text('$m د'),
-                        selected: AppState.instance.effectiveWorkMinutes == m,
-                        onSelected: (_) {
-                          AppState.instance.setCustomWorkMinutes(m);
-                          if (!_isRunning) {
-                            setState(() {
-                              _remainingSeconds = _phaseTotalSeconds;
-                            });
-                          }
-                          Navigator.pop(ctx);
-                        },
-                      ))
-                  .toList(),
-            ),
-            const SizedBox(height: 16),
-          ],
-        ),
+        child: Wrap(children: [
+          ListTile(
+            leading: const Icon(Icons.delete, color: Colors.red),
+            title: const Text('حذف المعاملة'),
+            onTap: () async {
+              await BudgetState.instance.deleteTransaction(tx.id);
+              if (ctx.mounted) Navigator.pop(ctx);
+              if (mounted) setState(() {});
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.close),
+            title: const Text('إلغاء'),
+            onTap: () => Navigator.pop(ctx),
+          ),
+        ]),
       ),
     );
   }
 
-  String _formatTime(int seconds) {
-    final m = (seconds ~/ 60).toString().padLeft(2, '0');
-    final s = (seconds % 60).toString().padLeft(2, '0');
-    return '$m:$s';
-  }
+  String _formatDate(DateTime d) =>
+      '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')} ${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
 
   @override
   Widget build(BuildContext context) {
-    final state = AppState.instance;
-    final themeColor =
-        themeOptions.firstWhere((t) => t.id == state.selectedThemeId).color;
-    final progress = 1 - (_remainingSeconds / _phaseTotalSeconds);
+    final state = BudgetState.instance;
+    final ads = AdManager.instance;
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
-      child: Column(
+    return Scaffold(
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _openQuickAdd,
+        icon: const Icon(Icons.add),
+        label: const Text('إضافة سريعة'),
+      ),
+      body: Column(
         children: [
-          const SizedBox(height: 4),
-          // رسالة تحفيزية عشوائية
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            decoration: BoxDecoration(
-              color: themeColor.withOpacity(0.08),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Text(
-              _currentQuote,
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 13),
-            ),
-          ),
-          const SizedBox(height: 16),
-          Text(_phaseLabel, style: const TextStyle(fontSize: 20)),
-          const SizedBox(height: 8),
-          // وسم المهمة الحالية
-          GestureDetector(
-            onTap: _editTaskLabel,
-            child: Chip(
-              avatar: const Icon(Icons.edit_note, size: 18),
-              label: Text(_taskLabel ?? 'اضغط لإضافة وسم للمهمة (اختياري)'),
-            ),
-          ),
-          const SizedBox(height: 20),
-          SizedBox(
-            width: 240,
-            height: 240,
-            child: Stack(
-              alignment: Alignment.center,
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 90),
               children: [
-                SizedBox(
-                  width: 240,
-                  height: 240,
-                  child: CircularProgressIndicator(
-                    value: progress.clamp(0, 1),
-                    strokeWidth: 10,
-                    backgroundColor: Colors.grey.shade200,
-                    valueColor: AlwaysStoppedAnimation(themeColor),
-                  ),
+                _SummaryCard(state: state),
+                const SizedBox(height: 20),
+                const Text('الظروف الرقمية',
+                    style:
+                        TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 10),
+                GridView.count(
+                  crossAxisCount: 2,
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  crossAxisSpacing: 12,
+                  mainAxisSpacing: 12,
+                  childAspectRatio: 1.3,
+                  children: state.categories
+                      .map((c) => _EnvelopeCard(category: c, state: state))
+                      .toList(),
                 ),
-                Text(_formatTime(_remainingSeconds),
-                    style: const TextStyle(
-                        fontSize: 44, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 24),
+                const Text('أحدث المعاملات',
+                    style:
+                        TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                if (state.recentTransactions.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.all(24),
+                    child: Center(child: Text('لا توجد معاملات بعد')),
+                  )
+                else
+                  ...state.recentTransactions.map((tx) {
+                    ExpenseCategory? cat;
+                    if (tx.categoryId != null) {
+                      final matches = state.categories
+                          .where((c) => c.id == tx.categoryId);
+                      cat = matches.isNotEmpty ? matches.first : null;
+                    }
+                    final isIncome = tx.type == TxType.income;
+                    return Card(
+                      child: ListTile(
+                        onLongPress: () => _editOrDeleteTransaction(tx),
+                        leading: CircleAvatar(
+                          backgroundColor:
+                              (cat?.color ?? Colors.green).withOpacity(0.15),
+                          child: Icon(
+                              isIncome
+                                  ? Icons.arrow_downward
+                                  : (cat?.icon ?? Icons.category),
+                              color: cat?.color ?? Colors.green,
+                              size: 18),
+                        ),
+                        title:
+                            Text(isIncome ? 'دخل' : (cat?.name ?? 'غير مصنف')),
+                        subtitle: Text(tx.note.isEmpty
+                            ? _formatDate(tx.date)
+                            : '${tx.note} • ${_formatDate(tx.date)}'),
+                        trailing: Text(
+                          '${isIncome ? '+' : '-'}${tx.amount.toStringAsFixed(0)} ${state.currencySymbol}',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: isIncome ? Colors.green : Colors.red,
+                          ),
+                        ),
+                      ),
+                    );
+                  }),
               ],
             ),
           ),
-          const SizedBox(height: 12),
-          if (_phase == PomodoroPhase.work)
-            TextButton.icon(
-              onPressed: state.isPremiumActive ? _pickCustomDuration : null,
-              icon: const Icon(Icons.workspace_premium, size: 18),
-              label: Text(state.isPremiumActive
-                  ? 'مدة مخصّصة: ${state.effectiveWorkMinutes} د'
-                  : 'المدة المخصّصة متاحة في الوضع المميز'),
+          if (ads.isOnline && ads.isBannerLoaded && ads.bannerAd != null)
+            SizedBox(
+              width: ads.bannerAd!.size.width.toDouble(),
+              height: ads.bannerAd!.size.height.toDouble(),
+              child: AdWidget(ad: ads.bannerAd!),
             ),
-          const SizedBox(height: 20),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              OutlinedButton(
-                onPressed: _resetPhase,
-                child: const Icon(Icons.refresh),
-              ),
-              const SizedBox(width: 20),
-              FilledButton(
-                onPressed: _toggleTimer,
-                style: FilledButton.styleFrom(
-                  backgroundColor: themeColor,
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 36, vertical: 20),
-                ),
-                child: Icon(_isRunning ? Icons.pause : Icons.play_arrow,
-                    size: 28),
-              ),
-            ],
-          ),
-          const SizedBox(height: 28),
-          Wrap(
-            spacing: 16,
-            runSpacing: 8,
-            alignment: WrapAlignment.center,
-            children: [
-              _StatChip(
-                  icon: Icons.local_fire_department,
-                  label: 'سلسلة ${state.streakDays} يوم'),
-              _StatChip(
-                  icon: Icons.check_circle,
-                  label: 'اليوم: ${state.todaysSessions} جلسات'),
-              _StatChip(
-                  icon: Icons.military_tech, label: 'المستوى ${state.level}'),
-            ],
-          ),
         ],
       ),
     );
-  }
-}
-
-class _StatChip extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  const _StatChip({required this.icon, required this.label});
-  @override
-  Widget build(BuildContext context) {
-    return Chip(
-      avatar: Icon(icon, size: 18),
-      label: Text(label),
-    );
-  }
-}
-
-// =============================================================================
-// شاشة الإحصائيات + سجل الجلسات (مع إعلان Native مدمج داخل القائمة)
-// + أوسمة الإنجاز + رسم بياني أسبوعي بسيط
-// =============================================================================
-class StatsScreen extends StatelessWidget {
-  const StatsScreen({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    final state = AppState.instance;
-    final history = state.history;
-    final weekMinutes = state.last7DaysMinutes;
-    final maxWeekMinutes =
-        weekMinutes.fold<int>(1, (m, v) => v > m ? v : m);
-    final weekDayLabels = ['ح', 'ن', 'ث', 'ر', 'خ', 'ج', 'س'];
-    final todayWeekday = DateTime.now().weekday % 7; // 0..6 حيث 0 = الأحد
-
-    return CustomScrollView(
-      slivers: [
-        SliverToBoxAdapter(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              children: [
-                Expanded(
-                  child: _SummaryCard(
-                    icon: Icons.today,
-                    title: 'دقائق اليوم',
-                    value: '${state.todaysMinutes}',
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _SummaryCard(
-                    icon: Icons.emoji_events,
-                    title: 'إجمالي الجلسات',
-                    value: '${state.totalSessions}',
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-        // رسم بياني بسيط لآخر 7 أيام
-        SliverPadding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          sliver: SliverToBoxAdapter(
-            child: Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('آخر 7 أيام',
-                        style: Theme.of(context).textTheme.titleMedium),
-                    const SizedBox(height: 12),
-                    SizedBox(
-                      height: 90,
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                        children: List.generate(7, (i) {
-                          final minutes = weekMinutes[i];
-                          final barHeight =
-                              60 * (minutes / maxWeekMinutes).clamp(0.05, 1.0);
-                          final dayIndex = (todayWeekday - 6 + i + 7) % 7;
-                          return Column(
-                            mainAxisAlignment: MainAxisAlignment.end,
-                            children: [
-                              Text('$minutes',
-                                  style: const TextStyle(fontSize: 10)),
-                              const SizedBox(height: 4),
-                              Container(
-                                width: 18,
-                                height: barHeight.toDouble(),
-                                decoration: BoxDecoration(
-                                  color: Theme.of(context).colorScheme.primary,
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(weekDayLabels[dayIndex],
-                                  style: const TextStyle(fontSize: 11)),
-                            ],
-                          );
-                        }),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-        // أوسمة الإنجاز
-        SliverPadding(
-          padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
-          sliver: SliverToBoxAdapter(
-            child: Text('🏅 أوسمة الإنجاز',
-                style: Theme.of(context).textTheme.titleMedium),
-          ),
-        ),
-        SliverPadding(
-          padding: const EdgeInsets.all(16),
-          sliver: SliverToBoxAdapter(
-            child: Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              children: achievements.map((a) {
-                final unlocked = a.isUnlocked(state);
-                return Container(
-                  width: 100,
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: unlocked
-                        ? Colors.amber.withOpacity(0.15)
-                        : Colors.grey.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color: unlocked ? Colors.amber : Colors.grey.shade300,
-                    ),
-                  ),
-                  child: Column(
-                    children: [
-                      Icon(a.icon,
-                          color: unlocked ? Colors.amber.shade800 : Colors.grey,
-                          size: 26),
-                      const SizedBox(height: 6),
-                      Text(a.title,
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
-                              color: unlocked ? null : Colors.grey)),
-                      Text(a.description,
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                              fontSize: 9,
-                              color: unlocked
-                                  ? Colors.grey.shade700
-                                  : Colors.grey.shade400)),
-                    ],
-                  ),
-                );
-              }).toList(),
-            ),
-          ),
-        ),
-        SliverPadding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          sliver: SliverToBoxAdapter(
-            child: Text('سجل الجلسات',
-                style: Theme.of(context).textTheme.titleMedium),
-          ),
-        ),
-        const SliverToBoxAdapter(child: SizedBox(height: 8)),
-        if (history.isEmpty)
-          const SliverToBoxAdapter(
-            child: Padding(
-              padding: EdgeInsets.all(32),
-              child:
-                  Center(child: Text('لا توجد جلسات بعد، ابدأ أول تركيز لك!')),
-            ),
-          )
-        else
-          SliverPadding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            sliver: SliverList(
-              delegate: SliverChildBuilderDelegate(
-                (context, index) {
-                  // كل nativeAdEveryNItems عنصر، نُدرج إعلان Native كعنصر إضافي
-                  final adSlotsBefore = index ~/ (nativeAdEveryNItems + 1);
-                  final isAdSlot =
-                      (index + 1) % (nativeAdEveryNItems + 1) == 0;
-                  if (isAdSlot) {
-                    if (AdManager.instance.isNativeLoaded &&
-                        AdManager.instance.nativeAd != null) {
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 10),
-                        child: SizedBox(
-                          height: 100,
-                          child: AdWidget(ad: AdManager.instance.nativeAd!),
-                        ),
-                      );
-                    }
-                    return const SizedBox.shrink();
-                  }
-                  final realIndex = index - adSlotsBefore;
-                  if (realIndex >= history.length) return null;
-                  final session = history[realIndex];
-                  return Card(
-                    child: ListTile(
-                      leading: const Icon(Icons.check_circle_outline),
-                      title: Text('${session.minutes} دقيقة تركيز' +
-                          (session.label != null ? ' — ${session.label}' : '')),
-                      subtitle: Text(_formatDate(session.date)),
-                    ),
-                  );
-                },
-                childCount: history.length +
-                    (history.length ~/ nativeAdEveryNItems),
-              ),
-            ),
-          ),
-        const SliverToBoxAdapter(child: SizedBox(height: 24)),
-      ],
-    );
-  }
-
-  String _formatDate(DateTime d) {
-    return '${d.year}/${d.month.toString().padLeft(2, '0')}/${d.day.toString().padLeft(2, '0')}  ${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
   }
 }
 
 class _SummaryCard extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String value;
-  const _SummaryCard(
-      {required this.icon, required this.title, required this.value});
-
+  final BudgetState state;
+  const _SummaryCard({required this.state});
   @override
   Widget build(BuildContext context) {
     return Card(
+      elevation: 3,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(20),
         child: Column(
           children: [
-            Icon(icon, size: 26),
+            Text('الرصيد المتبقي',
+                style: TextStyle(color: Colors.grey.shade600, fontSize: 13)),
             const SizedBox(height: 6),
-            Text(value,
-                style:
-                    const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
-            Text(title, style: const TextStyle(color: Colors.grey)),
+            Text(
+              '${state.balance.toStringAsFixed(0)} ${state.currencySymbol}',
+              style: TextStyle(
+                fontSize: 30,
+                fontWeight: FontWeight.bold,
+                color:
+                    state.balance >= 0 ? Colors.green.shade700 : Colors.red,
+              ),
+            ),
+            const SizedBox(height: 14),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                _MiniStat(
+                    label: 'الدخل',
+                    value: state.totalIncome,
+                    color: Colors.green,
+                    symbol: state.currencySymbol),
+                _MiniStat(
+                    label: 'المصاريف',
+                    value: state.totalExpense,
+                    color: Colors.red,
+                    symbol: state.currencySymbol),
+              ],
+            ),
           ],
         ),
       ),
@@ -1433,119 +1261,568 @@ class _SummaryCard extends StatelessWidget {
   }
 }
 
-// =============================================================================
-// شاشة المتجر: ثيمات ألوان + مضاعفة عملات اليوم + فتح الوضع المميز 24 ساعة
-// =============================================================================
-class ShopScreen extends StatelessWidget {
-  const ShopScreen({super.key});
-
-  void _watchAdToDoubleCoins(BuildContext context) {
-    final state = AppState.instance;
-    if (state.rewardedUsedToday) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('استخدمت هذه الميزة اليوم، عاود غداً 🙏')),
-      );
-      return;
-    }
-    final ad = AdManager.instance.rewardedAd;
-    if (ad == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('الإعلان لسه بيتحمّل، حاول بعد لحظة')),
-      );
-      return;
-    }
-    AdManager.instance.rewardedAd = null;
-    ad.show(
-      onUserEarnedReward: (ad, reward) async {
-        await state.doubleTodaysCoinsViaAd();
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('تمت مضاعفة عملات اليوم! 🎉')),
-          );
-        }
-      },
+class _MiniStat extends StatelessWidget {
+  final String label;
+  final double value;
+  final Color color;
+  final String symbol;
+  const _MiniStat(
+      {required this.label,
+      required this.value,
+      required this.color,
+      required this.symbol});
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Text('${value.toStringAsFixed(0)} $symbol',
+            style: TextStyle(fontWeight: FontWeight.bold, color: color)),
+        Text(label,
+            style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+      ],
     );
   }
+}
 
-  void _watchAdForPremium(BuildContext context) {
-    final ad = AdManager.instance.rewardedPremiumAd;
-    if (ad == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('الإعلان لسه بيتحمّل، حاول بعد لحظة')),
-      );
-      return;
+class _EnvelopeCard extends StatelessWidget {
+  final ExpenseCategory category;
+  final BudgetState state;
+  const _EnvelopeCard({required this.category, required this.state});
+
+  @override
+  Widget build(BuildContext context) {
+    final spent = state.spentInCategory(category.id);
+    final budget = category.monthlyBudget;
+    final ratio = budget > 0 ? (spent / budget) : 0.0;
+    Color barColor;
+    if (budget <= 0) {
+      barColor = Colors.grey;
+    } else if (ratio >= 1) {
+      barColor = Colors.red;
+    } else if (ratio >= 0.75) {
+      barColor = Colors.amber;
+    } else {
+      barColor = Colors.green;
     }
-    AdManager.instance.rewardedPremiumAd = null;
-    ad.show(
-      onUserEarnedReward: (ad, reward) async {
-        await AppState.instance.unlockPremiumFor24h();
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-                content: Text('تم تفعيل الوضع المميز لمدة 24 ساعة! 👑')),
-          );
-        }
-      },
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: category.color.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: category.color.withOpacity(0.25)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(category.icon, color: category.color, size: 20),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(category.name,
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                    overflow: TextOverflow.ellipsis),
+              ),
+            ],
+          ),
+          const Spacer(),
+          Text(
+            '${spent.toStringAsFixed(0)} / ${budget > 0 ? budget.toStringAsFixed(0) : '∞'} ${state.currencySymbol}',
+            style: const TextStyle(fontSize: 12),
+          ),
+          const SizedBox(height: 6),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: LinearProgressIndicator(
+              value: budget > 0 ? ratio.clamp(0, 1) : 0,
+              minHeight: 7,
+              backgroundColor: Colors.grey.shade200,
+              valueColor: AlwaysStoppedAnimation(barColor),
+            ),
+          ),
+        ],
+      ),
     );
   }
+}
 
-  void _onBuyTheme(BuildContext context, ThemeOption option) {
-    final state = AppState.instance;
-    if (state.canUseTheme(option)) {
-      state.selectTheme(option.id);
-      return;
-    }
-    final ok = state.buyTheme(option);
-    if (!ok) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('عملاتك غير كافية 😅')),
-      );
-    }
-  }
+// ============================================================================
+// ANALYTICS SCREEN (كان في analytics_screen.dart)
+// ============================================================================
 
-  String _formatRemaining(Duration d) {
-    final h = d.inHours;
-    final m = d.inMinutes % 60;
-    return '$h ساعة و $m دقيقة';
+class AnalyticsScreen extends StatelessWidget {
+  const AnalyticsScreen({super.key});
+
+  List<String> _smartAlerts(BudgetState state) {
+    final alerts = <String>[];
+    final now = DateTime.now();
+    final dayOfMonth = now.day;
+    for (final c in state.categories) {
+      if (c.monthlyBudget <= 0) continue;
+      final spent = state.spentInCategory(c.id);
+      final ratio = spent / c.monthlyBudget;
+      if (ratio >= 1) {
+        alerts.add('تجاوزت ميزانية ${c.name} هذا الشهر 🚨');
+      } else if (ratio >= 0.8 && dayOfMonth <= 15) {
+        alerts.add(
+            'استهلكت ${(ratio * 100).toStringAsFixed(0)}% من ميزانية ${c.name} خلال أول $dayOfMonth أيام من الشهر ⚠️');
+      }
+    }
+    if (alerts.isEmpty && state.totalExpense > 0) {
+      alerts.add('إنفاقك ضمن السيطرة هذا الشهر، استمر! 👍');
+    }
+    return alerts;
   }
 
   @override
   Widget build(BuildContext context) {
-    final state = AppState.instance;
-    return ListView(
-      padding: const EdgeInsets.all(16),
+    final state = BudgetState.instance;
+    final ads = AdManager.instance;
+    final totals = state.categoryTotalsThisMonth();
+    final monthly = state.monthlyExpenseTotals();
+    final alerts = _smartAlerts(state);
+    const monthNames = [
+      'ينا', 'فبر', 'مار', 'أبر', 'ماي', 'يون',
+      'يول', 'أغس', 'سبت', 'أكت', 'نوف', 'ديس'
+    ];
+
+    return Column(
       children: [
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 90),
+            children: [
+              const Text('توزيع المصاريف هذا الشهر',
+                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 12),
+              if (totals.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.all(24),
+                  child:
+                      Center(child: Text('لا توجد مصاريف مسجلة هذا الشهر')),
+                )
+              else
+                SizedBox(
+                  height: 220,
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: PieChart(
+                          PieChartData(
+                            sectionsSpace: 2,
+                            centerSpaceRadius: 40,
+                            sections: totals.entries.map((e) {
+                              final cat = state.categories
+                                  .firstWhere((c) => c.id == e.key);
+                              final pct = state.totalExpense > 0
+                                  ? (e.value / state.totalExpense * 100)
+                                  : 0;
+                              return PieChartSectionData(
+                                value: e.value,
+                                color: cat.color,
+                                title: '${pct.toStringAsFixed(0)}%',
+                                radius: 55,
+                                titleStyle: const TextStyle(
+                                    fontSize: 11,
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold),
+                              );
+                            }).toList(),
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: totals.entries.map((e) {
+                            final cat = state.categories
+                                .firstWhere((c) => c.id == e.key);
+                            return Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 3),
+                              child: Row(
+                                children: [
+                                  Container(
+                                      width: 10, height: 10, color: cat.color),
+                                  const SizedBox(width: 6),
+                                  Expanded(
+                                      child: Text(cat.name,
+                                          style:
+                                              const TextStyle(fontSize: 12),
+                                          overflow: TextOverflow.ellipsis)),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              const SizedBox(height: 28),
+              const Text('مقارنة آخر 6 أشهر',
+                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 12),
+              SizedBox(
+                height: 180,
+                child: BarChart(
+                  BarChartData(
+                    borderData: FlBorderData(show: false),
+                    gridData: const FlGridData(show: false),
+                    titlesData: FlTitlesData(
+                      leftTitles: const AxisTitles(
+                          sideTitles: SideTitles(showTitles: false)),
+                      rightTitles: const AxisTitles(
+                          sideTitles: SideTitles(showTitles: false)),
+                      topTitles: const AxisTitles(
+                          sideTitles: SideTitles(showTitles: false)),
+                      bottomTitles: AxisTitles(
+                        sideTitles: SideTitles(
+                          showTitles: true,
+                          getTitlesWidget: (v, meta) {
+                            final now = DateTime.now();
+                            final m =
+                                DateTime(now.year, now.month - (5 - v.toInt()));
+                            return Padding(
+                              padding: const EdgeInsets.only(top: 6),
+                              child: Text(monthNames[m.month - 1],
+                                  style: const TextStyle(fontSize: 10)),
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                    barGroups: List.generate(monthly.length, (i) {
+                      return BarChartGroupData(x: i, barRods: [
+                        BarChartRodData(
+                          toY: monthly[i],
+                          color: Theme.of(context).colorScheme.primary,
+                          width: 18,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                      ]);
+                    }),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 28),
+              const Text('تنبيهات ذكية',
+                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 10),
+              ...alerts.map((a) => Card(
+                    color: Colors.amber.withOpacity(0.12),
+                    child: Padding(
+                      padding: const EdgeInsets.all(14),
+                      child: Text(a),
+                    ),
+                  )),
+            ],
+          ),
+        ),
+        if (ads.isOnline && ads.isBannerLoaded && ads.bannerAd != null)
+          SizedBox(
+            width: ads.bannerAd!.size.width.toDouble(),
+            height: ads.bannerAd!.size.height.toDouble(),
+            child: AdWidget(ad: ads.bannerAd!),
+          ),
+      ],
+    );
+  }
+}
+
+// ============================================================================
+// CHALLENGES SCREEN (كان في challenges_screen.dart)
+// ============================================================================
+
+class ChallengesScreen extends StatefulWidget {
+  const ChallengesScreen({super.key});
+  @override
+  State<ChallengesScreen> createState() => _ChallengesScreenState();
+}
+
+class _ChallengesScreenState extends State<ChallengesScreen> {
+  void _addGoalDialog() {
+    final nameCtrl = TextEditingController();
+    final amountCtrl = TextEditingController();
+    DateTime? deadline;
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setD) => AlertDialog(
+          title: const Text('هدف توفير جديد'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameCtrl,
+                decoration: const InputDecoration(labelText: 'اسم الهدف'),
+              ),
+              TextField(
+                controller: amountCtrl,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'المبلغ المطلوب'),
+              ),
+              const SizedBox(height: 8),
+              TextButton.icon(
+                icon: const Icon(Icons.calendar_month),
+                label: Text(deadline == null
+                    ? 'اختر تاريخاً نهائياً (اختياري)'
+                    : '${deadline!.year}/${deadline!.month}/${deadline!.day}'),
+                onPressed: () async {
+                  final picked = await showDatePicker(
+                    context: ctx,
+                    firstDate: DateTime.now(),
+                    lastDate: DateTime.now().add(const Duration(days: 3650)),
+                    initialDate: DateTime.now().add(const Duration(days: 30)),
+                  );
+                  if (picked != null) setD(() => deadline = picked);
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('إلغاء')),
+            FilledButton(
+              onPressed: () async {
+                final amount = double.tryParse(amountCtrl.text.trim());
+                if (nameCtrl.text.trim().isEmpty ||
+                    amount == null ||
+                    amount <= 0) {
+                  return;
+                }
+                await BudgetState.instance.addGoal(SavingsGoal(
+                  id: DateTime.now().microsecondsSinceEpoch.toString(),
+                  name: nameCtrl.text.trim(),
+                  targetAmount: amount,
+                  deadline: deadline,
+                ));
+                if (ctx.mounted) Navigator.pop(ctx);
+                if (mounted) setState(() {});
+              },
+              child: const Text('إنشاء'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _addToGoalDialog(SavingsGoal g) {
+    final ctrl = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('إضافة إلى: ${g.name}'),
+        content: TextField(
+          controller: ctrl,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(labelText: 'المبلغ'),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
+          FilledButton(
+            onPressed: () async {
+              final v = double.tryParse(ctrl.text.trim());
+              if (v == null || v <= 0) return;
+              await BudgetState.instance.addToGoal(g.id, v);
+              if (ctx.mounted) Navigator.pop(ctx);
+              if (mounted) setState(() {});
+            },
+            child: const Text('إضافة'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _watchAdForPerk(String perkId, String successMessage) {
+    AdManager.instance.showRewardedForPerk(
+      perkId: perkId,
+      onEarned: () async {
+        await BudgetState.instance.unlockPerk(perkId);
+        if (mounted) {
+          setState(() {});
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text(successMessage)));
+        }
+      },
+      onNotReady: () {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('الإعلان لسه بيتحمّل، حاول بعد لحظة')));
+      },
+    );
+  }
+
+  Widget _perkChip(String id, String label, String successMsg) {
+    final unlocked = BudgetState.instance.unlockedPerks.contains(id);
+    return ActionChip(
+      avatar:
+          Icon(unlocked ? Icons.check : Icons.play_circle_fill, size: 18),
+      label: Text(unlocked ? '$label (مفتوح)' : label),
+      onPressed: unlocked ? null : () => _watchAdForPerk(id, successMsg),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final state = BudgetState.instance;
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 40),
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text('حصالة الأهداف',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            IconButton(
+                onPressed: _addGoalDialog,
+                icon: const Icon(Icons.add_circle)),
+          ],
+        ),
+        if (state.goals.isEmpty)
+          const Padding(
+            padding: EdgeInsets.all(20),
+            child: Center(child: Text('لا توجد أهداف بعد، أنشئ أول هدف لك!')),
+          )
+        else
+          ...state.goals.map((g) => Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(g.name,
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.bold)),
+                          IconButton(
+                            icon: const Icon(Icons.delete_outline, size: 20),
+                            onPressed: () async {
+                              await BudgetState.instance.deleteGoal(g.id);
+                              setState(() {});
+                            },
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(6),
+                        child: LinearProgressIndicator(
+                          value: g.progress,
+                          minHeight: 8,
+                          backgroundColor: Colors.grey.shade200,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                              '${g.savedAmount.toStringAsFixed(0)} / ${g.targetAmount.toStringAsFixed(0)} ${state.currencySymbol}'),
+                          Text('${(g.progress * 100).toStringAsFixed(0)}%'),
+                        ],
+                      ),
+                      if (g.deadline != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text(
+                              'الموعد: ${g.deadline!.year}/${g.deadline!.month}/${g.deadline!.day}',
+                              style: const TextStyle(
+                                  fontSize: 12, color: Colors.grey)),
+                        ),
+                      const SizedBox(height: 8),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: OutlinedButton(
+                          onPressed: () => _addToGoalDialog(g),
+                          child: const Text('إضافة مبلغ'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              )),
+        const SizedBox(height: 24),
+        const Text('تحدي الـ 30 يوماً',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 8),
         Card(
-          color: Colors.amber.shade50,
           child: Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(Icons.monetization_on,
-                        color: Colors.amber, size: 32),
-                    const SizedBox(width: 8),
-                    Text('${state.coins}',
-                        style: const TextStyle(
-                            fontSize: 26, fontWeight: FontWeight.bold)),
-                  ],
+                Text(
+                    'عدد أيام الالتزام: ${state.thirtyDayCheckins.length} / 30'),
+                const SizedBox(height: 8),
+                LinearProgressIndicator(
+                  value: (state.thirtyDayCheckins.length / 30).clamp(0, 1),
                 ),
                 const SizedBox(height: 12),
                 ElevatedButton.icon(
-                  onPressed: () => _watchAdToDoubleCoins(context),
-                  icon: const Icon(Icons.play_circle_fill),
-                  label: Text(state.rewardedUsedToday
-                      ? 'تمت المضاعفة اليوم ✅'
-                      : 'شاهد إعلان لمضاعفة عملات اليوم'),
+                  onPressed: state.checkedInToday
+                      ? null
+                      : () async {
+                          final ok =
+                              await state.checkInThirtyDayChallenge();
+                          if (ok && state.goals.isNotEmpty) {
+                            await state.addToGoal(state.goals.first.id,
+                                state.thirtyDayDailyAmount);
+                          }
+                          if (mounted) setState(() {});
+                        },
+                  icon: const Icon(Icons.check_circle_outline),
+                  label: Text(state.checkedInToday
+                      ? 'تم تسجيل اليوم ✅'
+                      : 'تسجيل اليوم (+${state.thirtyDayDailyAmount.toStringAsFixed(0)} ${state.currencySymbol})'),
                 ),
               ],
             ),
           ),
         ),
-        const SizedBox(height: 16),
-        // بطاقة الوضع المميز 24 ساعة عبر إعلان مكافأة
+        const SizedBox(height: 20),
+        const Text('تتبع الامتناع عن الشراء',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 8),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('أيام الامتناع: ${state.noSpendDays.length} يوم'),
+                const SizedBox(height: 12),
+                ElevatedButton.icon(
+                  onPressed: state.markedNoSpendToday
+                      ? null
+                      : () async {
+                          final ok = await state.markNoSpendToday();
+                          if (ok && state.goals.isNotEmpty) {
+                            await state.addToGoal(
+                                state.goals.first.id, state.noSpendDailyAmount);
+                          }
+                          if (mounted) setState(() {});
+                        },
+                  icon: const Icon(Icons.block),
+                  label: Text(state.markedNoSpendToday
+                      ? 'تم تسجيل اليوم ✅'
+                      : 'لم أصرف اليوم (+${state.noSpendDailyAmount.toStringAsFixed(0)} ${state.currencySymbol} للحصالة)'),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 24),
+        const Text('مكافآت عبر الفيديو 🎁',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 8),
         Card(
           color: Colors.indigo.shade50,
           child: Padding(
@@ -1553,73 +1830,300 @@ class ShopScreen extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Row(
-                  children: [
-                    Icon(Icons.workspace_premium, color: Colors.indigo),
-                    SizedBox(width: 8),
-                    Text('الوضع المميز',
-                        style: TextStyle(
-                            fontSize: 17, fontWeight: FontWeight.bold)),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  '👑 بدون إعلانات بانر/مدمجة\n👑 مدة تركيز مخصّصة بدل 25 دقيقة الثابتة\n👑 ثيمتان حصريتان (ذهبي وزمردي)',
-                  style: TextStyle(fontSize: 13),
-                ),
-                const SizedBox(height: 12),
-                if (state.isPremiumActive)
-                  Text(
-                    'مفعّل حالياً — متبقٍ ${_formatRemaining(state.premiumRemaining)}',
-                    style: const TextStyle(
-                        color: Colors.green, fontWeight: FontWeight.bold),
-                  ),
-                const SizedBox(height: 8),
-                ElevatedButton.icon(
-                  onPressed: () => _watchAdForPremium(context),
-                  icon: const Icon(Icons.play_circle_fill),
-                  label: Text(state.isPremiumActive
-                      ? 'شاهد إعلاناً آخر لتمديد 24 ساعة إضافية'
-                      : 'شاهد إعلان لفتح الوضع المميز 24 ساعة'),
-                ),
+                const Text('شاهد فيديو قصير مقابل:'),
+                const SizedBox(height: 10),
+                Wrap(spacing: 8, runSpacing: 8, children: [
+                  _perkChip('theme_gold', 'فتح ثيم ذهبي 👑',
+                      'تم فتح الثيم الذهبي!'),
+                  _perkChip('extra_categories', 'فئات مخصصة إضافية',
+                      'تم فتح فئات إضافية!'),
+                  _perkChip('badge_saver', 'وسام موفّر 🏅',
+                      'حصلت على وسام الموفّر!'),
+                ]),
               ],
             ),
           ),
         ),
-        const SizedBox(height: 24),
-        const Text('🎨 ثيمات الألوان',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-        const SizedBox(height: 8),
-        ...themeOptions.map((t) {
-          final owned = state.ownedThemeIds.contains(t.id);
-          final usable = state.canUseTheme(t);
-          final selected = state.selectedThemeId == t.id;
-          String subtitle;
-          if (owned) {
-            subtitle = selected ? 'مُفعّل حالياً' : 'مملوك';
-          } else if (t.premiumOnly && state.isPremiumActive) {
-            subtitle = 'متاح الآن ضمن الوضع المميز';
-          } else if (t.premiumOnly) {
-            subtitle = 'حصري 👑 — فعّل الوضع المميز أو اشترِ بـ ${t.cost} 🪙';
-          } else {
-            subtitle = 'السعر: ${t.cost} 🪙';
-          }
-          return Card(
-            child: ListTile(
-              leading: CircleAvatar(backgroundColor: t.color),
-              title: Text(t.name),
-              subtitle: Text(subtitle),
-              trailing: ElevatedButton(
-                onPressed: selected ? null : () => _onBuyTheme(context, t),
-                child: Text(
-                    selected ? 'مفعّل' : (usable ? 'تفعيل' : 'شراء')),
-              ),
-            ),
-          );
-        }),
       ],
     );
   }
 }
 
+// ============================================================================
+// SETTINGS SCREEN (كان في settings_screen.dart)
+// ============================================================================
+
+class SettingsScreen extends StatefulWidget {
+  const SettingsScreen({super.key});
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  void _addOrEditCategory({ExpenseCategory? existing}) {
+    final nameCtrl = TextEditingController(text: existing?.name ?? '');
+    final budgetCtrl = TextEditingController(
+        text: existing != null && existing.monthlyBudget > 0
+            ? existing.monthlyBudget.toStringAsFixed(0)
+            : '');
+    IconData selectedIcon =
+        existing != null ? existing.icon : pickableIcons.first;
+    Color selectedColor =
+        existing != null ? existing.color : pickableColors.first;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setD) => AlertDialog(
+          title: Text(existing == null ? 'فئة جديدة' : 'تعديل الفئة'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: nameCtrl,
+                  decoration: const InputDecoration(labelText: 'اسم الفئة'),
+                ),
+                TextField(
+                  controller: budgetCtrl,
+                  keyboardType: TextInputType.number,
+                  decoration:
+                      const InputDecoration(labelText: 'الميزانية الشهرية'),
+                ),
+                const SizedBox(height: 10),
+                const Align(
+                    alignment: Alignment.centerRight,
+                    child: Text('الأيقونة')),
+                Wrap(
+                  spacing: 6,
+                  children: pickableIcons
+                      .map((i) => GestureDetector(
+                            onTap: () => setD(() => selectedIcon = i),
+                            child: CircleAvatar(
+                              backgroundColor: i == selectedIcon
+                                  ? selectedColor.withOpacity(0.3)
+                                  : Colors.grey.shade200,
+                              child: Icon(i, size: 18),
+                            ),
+                          ))
+                      .toList(),
+                ),
+                const SizedBox(height: 10),
+                const Align(
+                    alignment: Alignment.centerRight, child: Text('اللون')),
+                Wrap(
+                  spacing: 6,
+                  children: pickableColors
+                      .map((c) => GestureDetector(
+                            onTap: () => setD(() => selectedColor = c),
+                            child: CircleAvatar(
+                              backgroundColor: c,
+                              radius: 14,
+                              child: c.value == selectedColor.value
+                                  ? const Icon(Icons.check,
+                                      color: Colors.white, size: 16)
+                                  : null,
+                            ),
+                          ))
+                      .toList(),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('إلغاء')),
+            FilledButton(
+              onPressed: () async {
+                if (nameCtrl.text.trim().isEmpty) return;
+                final budget = double.tryParse(budgetCtrl.text.trim()) ?? 0;
+                final cat = ExpenseCategory(
+                  id: existing?.id ??
+                      DateTime.now().microsecondsSinceEpoch.toString(),
+                  name: nameCtrl.text.trim(),
+                  iconCodePoint: selectedIcon.codePoint,
+                  colorValue: selectedColor.value,
+                  monthlyBudget: budget,
+                );
+                if (existing == null) {
+                  await BudgetState.instance.addCategory(cat);
+                } else {
+                  await BudgetState.instance.updateCategory(cat);
+                }
+                if (ctx.mounted) Navigator.pop(ctx);
+                if (mounted) setState(() {});
+              },
+              child: const Text('حفظ'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _exportBackup() async {
+    final data = BudgetState.instance.exportBackupJson();
+    final dir = await getTemporaryDirectory();
+    final file = File('${dir.path}/budget_backup.json');
+    await file.writeAsString(data);
+    await Share.shareXFiles([XFile(file.path)],
+        text: 'نسخة احتياطية من بيانات التطبيق');
+  }
+
+  Future<void> _importBackup() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['json'],
+    );
+    if (result == null || result.files.single.path == null) return;
+    final file = File(result.files.single.path!);
+    final content = await file.readAsString();
+    try {
+      await BudgetState.instance.importBackupJson(content);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('تم استيراد النسخة الاحتياطية بنجاح')));
+        setState(() {});
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('تعذّر قراءة الملف، تأكد أنه نسخة صحيحة')));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final state = BudgetState.instance;
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 40),
+      children: [
+        const Text('العملة',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        DropdownButton<String>(
+          value: state.currencySymbol,
+          isExpanded: true,
+          items: supportedCurrencies
+              .map((c) => DropdownMenuItem(value: c, child: Text(c)))
+              .toList(),
+          onChanged: (v) {
+            if (v != null) state.setCurrency(v);
+            setState(() {});
+          },
+        ),
+        const Divider(height: 32),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('الوضع الداكن'),
+          value: state.darkMode,
+          onChanged: (v) {
+            state.setDarkMode(v);
+            setState(() {});
+          },
+        ),
+        const Divider(height: 32),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text('الفئات',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            IconButton(
+                onPressed: () => _addOrEditCategory(),
+                icon: const Icon(Icons.add_circle)),
+          ],
+        ),
+        ...state.categories.map((c) => Card(
+              child: ListTile(
+                leading: CircleAvatar(
+                    backgroundColor: c.color.withOpacity(0.2),
+                    child: Icon(c.icon, color: c.color)),
+                title: Text(c.name),
+                subtitle: Text(c.monthlyBudget > 0
+                    ? 'ميزانية: ${c.monthlyBudget.toStringAsFixed(0)} ${state.currencySymbol}'
+                    : 'بدون ميزانية محددة'),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                        icon: const Icon(Icons.edit, size: 20),
+                        onPressed: () => _addOrEditCategory(existing: c)),
+                    IconButton(
+                        icon: const Icon(Icons.delete_outline, size: 20),
+                        onPressed: () async {
+                          await state.deleteCategory(c.id);
+                          setState(() {});
+                        }),
+                  ],
+                ),
+              ),
+            )),
+        const Divider(height: 32),
+        const Text('التذكير اليومي',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text(
+              'تذكير الساعة ${state.reminderHour.toString().padLeft(2, '0')}:${state.reminderMinute.toString().padLeft(2, '0')}'),
+          value: state.reminderEnabled,
+          onChanged: (v) async {
+            await state.setReminder(
+                v, state.reminderHour, state.reminderMinute);
+            if (v) {
+              await NotificationService.scheduleDailyReminder(
+                  state.reminderHour, state.reminderMinute);
+            } else {
+              await NotificationService.cancelReminder();
+            }
+            setState(() {});
+          },
+        ),
+        TextButton.icon(
+          icon: const Icon(Icons.access_time),
+          label: const Text('تغيير وقت التذكير'),
+          onPressed: () async {
+            final picked = await showTimePicker(
+              context: context,
+              initialTime: TimeOfDay(
+                  hour: state.reminderHour, minute: state.reminderMinute),
+            );
+            if (picked != null) {
+              await state.setReminder(
+                  state.reminderEnabled, picked.hour, picked.minute);
+              if (state.reminderEnabled) {
+                await NotificationService.scheduleDailyReminder(
+                    picked.hour, picked.minute);
+              }
+              setState(() {});
+            }
+          },
+        ),
+        const Divider(height: 32),
+        const Text('النسخ الاحتياطي',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                icon: const Icon(Icons.upload_file),
+                label: const Text('تصدير'),
+                onPressed: _exportBackup,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: OutlinedButton.icon(
+                icon: const Icon(Icons.download),
+                label: const Text('استيراد'),
+                onPressed: _importBackup,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
 
